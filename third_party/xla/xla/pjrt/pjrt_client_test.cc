@@ -26,7 +26,7 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/synchronization/blocking_counter.h"
 #include "absl/types/span.h"
-#include "xla/cpu_function_runtime.h"
+#include "xla/backends/cpu/alignment.h"
 #include "xla/hlo/builder/xla_builder.h"
 #include "xla/hlo/builder/xla_computation.h"
 #include "xla/hlo/parser/hlo_parser.h"
@@ -571,7 +571,6 @@ ENTRY DuplicateDonationError() -> (f32[2, 2], f32[2, 2]) {
                           MakeFloatBuffer(client.get(), data, {2, 2}));
 
   xla::ExecuteOptions options;
-  options.untuple_result = true;
   {
     auto result = pjrt_executable->Execute(/*argument_handles=*/{{
                                                buffer0.get(),

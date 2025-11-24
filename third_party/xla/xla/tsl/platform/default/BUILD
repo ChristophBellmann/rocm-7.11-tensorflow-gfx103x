@@ -152,6 +152,7 @@ cc_library(
         "nobuilder",
     ],
     deps = [
+        "//xla/tsl/concurrency:executor",
         "//xla/tsl/platform:env_time",
         "//xla/tsl/platform:errors",
         "//xla/tsl/platform:file_statistics",
@@ -163,6 +164,7 @@ cc_library(
         "//xla/tsl/platform:types",
         "//xla/tsl/protobuf:error_codes_proto_impl_cc",
         "@com_google_absl//absl/base:core_headers",
+        "@com_google_absl//absl/base:nullability",
         "@com_google_absl//absl/functional:any_invocable",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/strings",
@@ -292,37 +294,10 @@ cc_library(
     ]),
 )
 
-cc_library(
-    name = "logging",
-    srcs = ["logging.cc"],
-    hdrs = ["//xla/tsl/platform:logging.h"],
-    tags = [
-        "manual",
-        "no_oss",
-        "nobuilder",
-    ],
-    textual_hdrs = ["logging.h"],
-    deps = [
-        "//xla/tsl/platform:env_time",
-        "//xla/tsl/platform:macros",
-        "//xla/tsl/platform:types",
-        "@com_google_absl//absl/base",
-        "@com_google_absl//absl/base:core_headers",
-        "@com_google_absl//absl/base:log_severity",
-        "@com_google_absl//absl/container:flat_hash_map",
-        "@com_google_absl//absl/strings",
-        "@com_google_absl//absl/strings:str_format",
-        "@com_google_absl//absl/strings:string_view",
-        "@com_google_absl//absl/synchronization",
-        "@local_tsl//tsl/platform",
-    ],
-)
-
 filegroup(
     name = "xla_cpu_runtime_srcs",
     srcs = [
         "context.h",
-        "integral_types.h",
     ] + if_not_windows(["env_time.cc"]),
 )
 
@@ -349,7 +324,14 @@ cc_library(
     srcs = [
         "port.cc",
         "@local_tsl//tsl/platform:cpu_info.cc",
-    ],
+    ] + select({
+        "//xla/tsl:with_numa_support": [
+            "//xla/tsl/platform:numa_hwloc.cc",
+        ],
+        "//conditions:default": [
+            "//xla/tsl/platform:numa_noop.cc",
+        ],
+    }),
     hdrs = [
         "//xla/tsl/platform/profile_utils:cpu_utils.h",
         "@local_tsl//tsl/platform:cpu_info.h",
@@ -361,11 +343,7 @@ cc_library(
         "@local_tsl//tsl/platform:snappy.h",
     ],
     copts = tsl_copts(),
-    defines = ["TF_USE_SNAPPY"] + select({
-        # TF Additional NUMA defines
-        "//xla/tsl:with_numa_support": ["TENSORFLOW_USE_NUMA"],
-        "//conditions:default": [],
-    }),
+    defines = ["TF_USE_SNAPPY"],
     tags = [
         "manual",
         "no_oss",
@@ -382,12 +360,12 @@ cc_library(
         "@local_tsl//tsl/platform",
         "@snappy",
     ] + select({
-        # TF Additional NUMA dependencies
         "//xla/tsl:with_numa_support": [
-            # Don't merge in a single line
+            "@com_google_absl//absl/log",
             "@hwloc",
         ],
-        "//conditions:default": [],
+        "//conditions:default": [
+        ],
     }),
 )
 
@@ -501,7 +479,6 @@ cc_library(
         "no_oss",
         "nobuilder",
     ],
-    textual_hdrs = ["integral_types.h"],
 )
 
 cc_library(
@@ -626,7 +603,6 @@ filegroup(
         "casts.h",
         "context.h",
         "env.cc",
-        "integral_types.h",
         "load_library.cc",
         "port.cc",
         "posix_file_system.cc",
@@ -635,6 +611,7 @@ filegroup(
         "status.h",
         "statusor.h",
         "tracing_impl.h",
+        "//xla/tsl/platform:numa_noop.cc",
         "//xla/tsl/platform/profile_utils:cpu_utils.h",
         "//xla/tsl/platform/profile_utils:i_cpu_utils_helper.h",
     ],
@@ -662,8 +639,6 @@ exports_files(
     srcs = glob(
         ["*"],
         exclude = [
-            "integral_types.h",
-            "logging.h",
             "test.cc",
         ],
     ),
@@ -672,8 +647,6 @@ exports_files(
 
 exports_files(
     srcs = [
-        "integral_types.h",
-        "logging.h",
         "test.cc",
     ],
     visibility = internal_visibility([

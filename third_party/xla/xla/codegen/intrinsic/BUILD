@@ -23,25 +23,17 @@ package_group(
 
 cc_library(
     name = "intrinsic",
-    srcs = ["intrinsic.cc"],
     hdrs = ["intrinsic.h"],
     deps = [
-        "//xla:shape_util",
-        "//xla:util",
+        ":type",
+        ":vec_name_mangler",
         "//xla:xla_data_proto_cc",
-        "//xla/mlir/utils:type_util",
-        "//xla/service/llvm_ir:llvm_util",
-        "@com_google_absl//absl/log",
-        "@com_google_absl//absl/log:check",
-        "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
-        "@llvm-project//llvm:Support",
         "@llvm-project//llvm:Target",
         "@llvm-project//llvm:ir_headers",
         "@llvm-project//mlir:FuncDialect",
         "@llvm-project//mlir:IR",
-        "@llvm-project//mlir:Support",
     ],
 )
 
@@ -63,11 +55,16 @@ cc_library(
     hdrs = ["fptrunc.h"],
     deps = [
         ":intrinsic",
+        "//xla:shape_util",
         "//xla:util",
         "//xla:xla_data_proto_cc",
         "//xla/service/llvm_ir:llvm_util",
         "//xla/tsl/platform:errors",
+        "//xla/tsl/platform:status",
+        "//xla/tsl/platform:statusor",
+        "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@llvm-project//llvm:Support",
@@ -187,8 +184,13 @@ cc_library(
     name = "vec_name_mangler",
     hdrs = ["vec_name_mangler.h"],
     deps = [
+        ":type",
+        "//xla:util",
+        "@com_google_absl//absl/algorithm:container",
+        "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:string_view",
+        "@com_google_absl//absl/types:span",
     ],
 )
 
@@ -393,8 +395,8 @@ xla_cc_test(
         "//xla:xla_data_proto_cc",
         "//xla/tsl/platform:test_benchmark",
         "//xla/tsl/platform:test_main",
+        "@com_google_absl//absl/strings",
         "@llvm-project//llvm:Target",
-        "@llvm-project//llvm:TargetParser",
         "@llvm-project//llvm:ir_headers",
     ],
 )
@@ -426,6 +428,39 @@ xla_cc_test(
         "//xla:xla_data_proto_cc",
         "@com_google_googletest//:gtest_main",
         "@llvm-project//llvm:JITLink",
+        "@llvm-project//llvm:ir_headers",
+    ],
+)
+
+cc_library(
+    name = "type",
+    srcs = ["type.cc"],
+    hdrs = ["type.h"],
+    deps = [
+        "//xla:shape_util",
+        "//xla:util",
+        "//xla:xla_data_proto_cc",
+        "//xla/mlir/utils:type_util",
+        "//xla/service/llvm_ir:llvm_util",
+        "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/strings:string_view",
+        "@llvm-project//llvm:Support",
+        "@llvm-project//llvm:ir_headers",
+        "@llvm-project//mlir:IR",
+        "@llvm-project//mlir:Support",
+    ],
+)
+
+xla_cc_test(
+    name = "type_test",
+    srcs = ["type_test.cc"],
+    deps = [
+        ":type",
+        "//xla/tsl/lib/core:status_test_util",
+        "@com_google_googletest//:gtest_main",
+        "@llvm-project//llvm:Support",
         "@llvm-project//llvm:ir_headers",
     ],
 )

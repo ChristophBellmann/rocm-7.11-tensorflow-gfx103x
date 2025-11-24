@@ -26,10 +26,10 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/substitute.h"
+#include "xla/future.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/pjrt/pjrt_common.h"
 #include "xla/pjrt/pjrt_executable.h"
-#include "xla/pjrt/pjrt_future.h"
 #include "xla/pjrt/utils.h"
 #include "xla/service/hlo_cost_analysis.h"
 #include "xla/tsl/platform/statusor.h"
@@ -54,10 +54,9 @@ absl::StatusOr<std::uintptr_t> PjRtClient::UnsafeBufferPointer(
   return absl::bit_cast<std::uintptr_t>(ptr);
 }
 
-PjRtFuture<> PjRtBuffer::CopyRawToHostFuture(PjRtFuture<void*> dst,
-                                             int64_t offset,
-                                             int64_t transfer_size) {
-  return PjRtFuture<>(absl::UnimplementedError(
+Future<> PjRtBuffer::CopyRawToHostFuture(Future<void*> dst, int64_t offset,
+                                         int64_t transfer_size) {
+  return Future<>(absl::UnimplementedError(
       "PjRtBuffer::CopyRawToHostFuture is not implemented"));
 }
 

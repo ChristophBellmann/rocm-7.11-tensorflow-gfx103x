@@ -293,12 +293,17 @@ absl::Status BufferAllocation::AddAssignment(const HloValue& buffer,
   assigned_buffers_.emplace(&buffer, offset_size);
   // For debugging purposes, store the assigned memory space in the
   // instruction's layout.
-  for (HloPosition position : buffer.positions()) {
-    Shape* shape = ShapeUtil::GetMutableSubshape(
-        position.instruction->mutable_shape(), position.index);
-    if (shape->has_layout()) {
-      shape->mutable_layout()->set_memory_space(buffer.color());
+  for (const HloPosition& position : buffer.positions()) {
+    const Shape& shape =
+        ShapeUtil::GetSubshape(position.instruction->shape(), position.index);
+    if (!shape.has_layout() ||
+        shape.layout().memory_space() == buffer.color()) {
+      continue;
     }
+
+    Shape* mutable_shape = ShapeUtil::GetMutableSubshape(
+        position.instruction->mutable_shape(), position.index);
+    mutable_shape->mutable_layout()->set_memory_space(buffer.color());
   }
   return absl::OkStatus();
 }
@@ -683,10 +688,6 @@ absl::Status BufferAssignment::CombineTempAllocations(
     const absl::flat_hash_set<BufferValue::Color>& private_stack_colors,
     std::optional<BufferValue::Color> temp_buffer_color) {
   VLOG(1) << "CombineTempAllocations()";
-  // Stores the combined allocations.
-  std::deque<BufferAllocation> combined_allocations;
-  // Holds the pointer to a combined allocation of each color, if any.
-  flat_hash_map<BufferValue::Color, BufferAllocation*> combined_allocation_map;
 
   // Move all temp allocations into a single run at the end of the allocations
   // vector.
@@ -695,91 +696,97 @@ absl::Status BufferAssignment::CombineTempAllocations(
                      [](const BufferAllocation& allocation) {
                        return !allocation.IsPreallocatedTempBuffer();
                      });
+  // Stores the combined allocations.
+  std::vector<BufferAllocation> combined_allocations;
+  // Reserve the max possible size we'd need to ensure pointer stability.
+  combined_allocations.reserve(allocations_.end() - first_temp_it);
+  // Holds the pointer to a combined allocation of each color, if any.
+  flat_hash_map<BufferValue::Color, BufferAllocation*> combined_allocation_map;
 
   // Walk over the run of temp allocations, collecting the allocations belonging
   // to the same color.
-  if (first_temp_it != allocations_.end()) {
-    for (auto it = first_temp_it; it != allocations_.end(); ++it) {
-      BufferAllocation& temp_allocation = *it;
-      BufferValue::Color color = temp_allocation.color();
-      auto combined_it = combined_allocation_map.find(color);
-      if (combined_it == combined_allocation_map.end()) {
-        // We have found the first temp allocation of this color. Collect
-        // the other temp allocations of the same color into it subject to the
-        // size constraint.
-        VLOG(1) << "Combined temp allocation for color " << color
-                << " is: " << temp_allocation;
-        combined_allocations.push_back(temp_allocation);
-        combined_allocation_map.emplace(color, &combined_allocations.back());
-        continue;
-      }
-      if (combined_it->second->size() + it->size() >=
-          multiheap_size_constraint_per_heap_) {
-        // We cannot put more into the current combined_it. So, appoint a new
-        // combined_it.
-        VLOG(1) << "Due to size constraint, reset temp allocation for color "
-                << color << " to: " << temp_allocation;
-        combined_allocations.push_back(temp_allocation);
-        combined_allocation_map.emplace(color, &combined_allocations.back());
-        continue;
-      }
+  for (auto it = first_temp_it; it != allocations_.end(); ++it) {
+    BufferAllocation& temp_allocation = *it;
+    BufferValue::Color color = temp_allocation.color();
+    auto combined_it = combined_allocation_map.find(color);
+    if (combined_it == combined_allocation_map.end()) {
+      // We have found the first temp allocation of this color. Collect
+      // the other temp allocations of the same color into it subject to the
+      // size constraint.
+      VLOG(1) << "Combined temp allocation for color " << color
+              << " is: " << temp_allocation;
+      combined_allocations.push_back(std::move(temp_allocation));
+      combined_allocation_map.emplace(color, &combined_allocations.back());
+      continue;
+    }
+    if (combined_it->second->size() + temp_allocation.size() >=
+        multiheap_size_constraint_per_heap_) {
+      // We cannot put more into the current combined_it. So, appoint a new
+      // combined_it.
+      VLOG(1) << "Due to size constraint, reset temp allocation for color "
+              << color << " to: " << temp_allocation;
+      combined_allocations.push_back(std::move(temp_allocation));
+      combined_it->second = &combined_allocations.back();
+      continue;
+    }
 
-      BufferAllocation* combined_allocation = combined_it->second;
-      VLOG(1) << "Combined allocation absorbing temp allocation: "
-              << temp_allocation;
+    // If we got here, temp_allocation is still valid, since all the paths
+    // that `std::move` it continue.
+    BufferAllocation* combined_allocation = combined_it->second;
+    VLOG(1) << "Combined allocation absorbing temp allocation: "
+            << temp_allocation;
 
-      // Each temp allocation is placed end-to-end, accounting for alignment.
-      // The offset of each buffer in the combined allocation is computed from
-      // the base offset of the allocation. For private stack color, we assume
-      // each allocation object corresponds to one of the independent executions
-      // of the private stack computations, so it is safe to reuse offsets in
-      // that case.
-      int64_t alignment = color_alignment_(color);
-      int64_t base;
-      bool is_private_stack = private_stack_colors.contains(color);
-      if (is_private_stack) {
-        base = 0;
-        combined_allocation->set_size(std::max(base, temp_allocation.size()));
-      } else {
-        base = RoundUpTo(combined_allocation->size(), alignment);
-        combined_allocation->set_size(base + temp_allocation.size());
-      }
-      for (const auto& buffer_offset_size : temp_allocation.assigned_buffers_) {
-        const HloValue* value = buffer_offset_size.first;
-        const int64_t offset = buffer_offset_size.second.offset;
-        const int64_t size = buffer_offset_size.second.size;
-        TF_RETURN_IF_ERROR(
-            combined_allocation->AddAssignment(*value, base + offset, size));
-      }
-      if (!temp_allocation.HeapTraces().empty()) {
-        CHECK_EQ(temp_allocation.HeapTraces().size(), 1);
-        combined_allocation->AddHeapTrace(temp_allocation.HeapTraces().front());
-      }
+    // Each temp allocation is placed end-to-end, accounting for alignment.
+    // The offset of each buffer in the combined allocation is computed from
+    // the base offset of the allocation. For private stack color, we assume
+    // each allocation object corresponds to one of the independent executions
+    // of the private stack computations, so it is safe to reuse offsets in
+    // that case.
+    int64_t alignment = color_alignment_(color);
+    int64_t base;
+    bool is_private_stack = private_stack_colors.contains(color);
+    if (is_private_stack) {
+      base = 0;
+      combined_allocation->set_size(std::max(base, temp_allocation.size()));
+    } else {
+      base = RoundUpTo(combined_allocation->size(), alignment);
+      combined_allocation->set_size(base + temp_allocation.size());
+    }
+    for (const auto& buffer_offset_size : temp_allocation.assigned_buffers_) {
+      const HloValue* value = buffer_offset_size.first;
+      const int64_t offset = buffer_offset_size.second.offset;
+      const int64_t size = buffer_offset_size.second.size;
+      TF_RETURN_IF_ERROR(
+          combined_allocation->AddAssignment(*value, base + offset, size));
+    }
+    if (!temp_allocation.HeapTraces().empty()) {
+      CHECK_EQ(temp_allocation.HeapTraces().size(), 1);
+      combined_allocation->AddHeapTrace(temp_allocation.HeapTraces().front());
+    }
 
-      if (is_private_stack) {
-        if (temp_allocation.size() == combined_allocation->size()) {
-          combined_allocation->peak_buffers_ = temp_allocation.peak_buffers_;
-        }
-      } else {
-        combined_allocation->peak_buffers_.insert(
-            combined_allocation->peak_buffers_.end(),
-            temp_allocation.peak_buffers_.begin(),
-            temp_allocation.peak_buffers_.end());
+    if (is_private_stack) {
+      if (temp_allocation.size() == combined_allocation->size()) {
+        combined_allocation->peak_buffers_ = temp_allocation.peak_buffers_;
       }
+    } else {
+      combined_allocation->peak_buffers_.insert(
+          combined_allocation->peak_buffers_.end(),
+          temp_allocation.peak_buffers_.begin(),
+          temp_allocation.peak_buffers_.end());
+    }
 
-      if (temp_buffer_color.has_value()) {
-        if (combined_allocation->color() == 0) {
-          combined_allocation->set_color(temp_buffer_color.value());
-        }
+    if (temp_buffer_color.has_value()) {
+      if (combined_allocation->color() == 0) {
+        combined_allocation->set_color(temp_buffer_color.value());
       }
     }
-    // Replace all existing temporary allocations with the new combined
-    // allocations.
-    allocations_.erase(first_temp_it, allocations_.end());
-    for (BufferAllocation& combined : combined_allocations) {
-      temp_allocation_total_size_ += combined.size();
-      allocations_.push_back(std::move(combined));
-    }
+  }
+  // Replace all existing temporary allocations with the new combined
+  // allocations.
+  allocations_.erase(first_temp_it, allocations_.end());
+  for (BufferAllocation& combined : combined_allocations) {
+    temp_allocation_total_size_ += combined.size();
+    allocations_.push_back(std::move(combined));
   }
 
   // Update allocation indices to their new positions.
@@ -846,7 +853,7 @@ absl::StatusOr<int64_t> BufferAssignment::ComputeTotalFragmentationBytes(
     TF_ASSIGN_OR_RETURN(
         const int64_t min_size,
         HeapSimulator::MinimumMemoryForModule(schedule, alias_analysis(),
-                                              alias_info, buffer_size_));
+                                              alias_info, &buffer_size_));
     return stats_.total_allocation_bytes - min_size;
   }
   return -1;
@@ -983,13 +990,21 @@ std::string BufferAllocation::MemoryUsageReport(const std::string& prefix,
 
   // Group the values by their offset in the allocation.
   absl::flat_hash_map<int64_t, OffsetInfo> offset_to_buffers;
+  std::vector<const HloValue*> sorted_hlo_values;
+  sorted_hlo_values.reserve(assigned_buffers_.size());
   for (const auto& element : assigned_buffers_) {
-    const HloValue* value = element.first;
-    OffsetInfo& offset_info = offset_to_buffers[element.second.offset];
+    sorted_hlo_values.push_back(element.first);
+  }
+  absl::c_sort(sorted_hlo_values, [](const HloValue* a, const HloValue* b) {
+    return a->id() < b->id();
+  });
+  for (const HloValue* value : sorted_hlo_values) {
+    const OffsetSize& offset_size = assigned_buffers_.find(value)->second;
+    OffsetInfo& offset_info = offset_to_buffers[offset_size.offset];
     offset_info.values.push_back(value);
-    offset_info.offset_size.offset = element.second.offset;
+    offset_info.offset_size.offset = offset_size.offset;
     offset_info.offset_size.size =
-        std::max(offset_info.offset_size.size, element.second.size);
+        std::max(offset_info.offset_size.size, offset_size.size);
   }
 
   // Sort the offset infos by the max size of the values in the group.
@@ -1001,7 +1016,14 @@ std::string BufferAllocation::MemoryUsageReport(const std::string& prefix,
   }
   absl::c_sort(sorted_offset_infos,
                [](const OffsetInfo& a, const OffsetInfo& b) {
-                 return a.offset_size.size > b.offset_size.size;
+                 if (a.offset_size.size != b.offset_size.size) {
+                   return a.offset_size.size > b.offset_size.size;
+                 }
+                 // Each HloValue appears in just one OffsetInfo `values`
+                 // vector. Therefore we can use the id of any element of the
+                 // `values` vector as tie breaker, as long as the `values`
+                 // vector has a deterministic order.
+                 return a.values.back()->id() < b.values.back()->id();
                });
 
   StrAppend(&output, prefix,
@@ -1023,15 +1045,21 @@ std::string BufferAllocation::MemoryUsageReport(const std::string& prefix,
     // of the line.
     absl::flat_hash_map<std::string, int64_t> shapes;
     for (auto& value : offset_info.values) shapes[value->shape().ToString()]++;
+    std::vector<std::pair<int64_t, std::string>> sorted_shapes;
+    sorted_shapes.reserve(shapes.size());
+    for (const auto& entry : shapes) {
+      sorted_shapes.emplace_back(entry.second, entry.first);
+    }
+    absl::c_sort(sorted_shapes);
 
-    StrAppend(
-        &output,
-        absl::StrJoin(shapes, ", ", [](std::string* out, const auto& pair) {
-          if (pair.second == 1) {
-            return absl::StrAppend(out, pair.first);
-          }
-          return absl::StrAppend(out, pair.second, "×", pair.first);
-        }));
+    StrAppend(&output,
+              absl::StrJoin(
+                  sorted_shapes, ", ", [](std::string* out, const auto& pair) {
+                    if (pair.first == 1) {
+                      return absl::StrAppend(out, pair.second);
+                    }
+                    return absl::StrAppend(out, pair.first, "×", pair.second);
+                  }));
 
     StrAppend(&output, "\n");
 
@@ -1967,7 +1995,7 @@ absl::Status BufferAssigner::AssignBuffersWithSequentialOrdering(
               HeapSimulator::Run(
                   get_heap_algorithm(alignment), *private_stack_computation,
                   *instruction_sequence, assignment->alias_analysis(),
-                  alias_info_, assignment->buffer_size_, &schedule, options));
+                  alias_info_, &assignment->buffer_size_, &schedule, options));
           TF_RETURN_IF_ERROR(AssignBuffersFromHeapSimulator(
               result, assignment, color, isolation_options));
         }
@@ -1978,7 +2006,7 @@ absl::Status BufferAssigner::AssignBuffersWithSequentialOrdering(
             HeapSimulator::Run(get_heap_algorithm(alignment),
                                assignment->module(), schedule,
                                assignment->alias_analysis(), alias_info_,
-                               assignment->buffer_size_, options));
+                               &assignment->buffer_size_, options));
         TF_RETURN_IF_ERROR(AssignBuffersFromHeapSimulator(
             result, assignment, color, isolation_options));
       }
@@ -2012,7 +2040,7 @@ absl::Status BufferAssigner::AssignBuffersWithSequentialOrdering(
             HeapSimulator::Run(get_heap_algorithm(alignment), *computation,
                                *instruction_sequence,
                                assignment->alias_analysis(), alias_info_,
-                               assignment->buffer_size_, options));
+                               &assignment->buffer_size_, options));
         TF_RETURN_IF_ERROR(AssignBuffersFromHeapSimulator(
             result, assignment, color, isolation_options));
       }

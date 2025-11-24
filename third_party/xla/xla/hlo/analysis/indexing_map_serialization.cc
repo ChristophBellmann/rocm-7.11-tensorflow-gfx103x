@@ -39,9 +39,10 @@ limitations under the License.
 #include "mlir/AsmParser/AsmParser.h"
 #include "mlir/IR/AffineExpr.h"
 #include "mlir/IR/BuiltinAttributes.h"
-#include "mlir/IR/MLIRContext.h"
 #include "mlir/Support/LLVM.h"
 #include "xla/hlo/analysis/indexing_map.h"
+#include "xla/hlo/analysis/interval.h"
+#include "xla/hlo/analysis/symbolic_expr.h"
 
 namespace xla {
 namespace {
@@ -58,7 +59,6 @@ using mlir::AffineMap;
 using mlir::AffineMapAttr;
 using mlir::AffineSymbolExpr;
 using mlir::ArrayRef;
-using mlir::MLIRContext;
 
 enum class Delimeter { kParen, kBracket, kBrace };
 
@@ -393,7 +393,7 @@ bool ParseAffineMapResults(Parser& parser,
 bool ParseAffineExprsWithMLIR(ArrayRef<std::string> dim_var_names,
                               ArrayRef<std::string> symbol_var_names,
                               ArrayRef<std::string> affine_expr_strings,
-                              MLIRContext* context,
+                              SymbolicExprContext* context,
                               SmallVectorImpl<AffineExpr>& affine_exprs) {
   std::stringstream ss;
   ss << "affine_map<(" << absl::StrJoin(dim_var_names, ", ") << ") ";
@@ -401,7 +401,8 @@ bool ParseAffineExprsWithMLIR(ArrayRef<std::string> dim_var_names,
     ss << '[' << absl::StrJoin(symbol_var_names, ", ") << "] ";
   }
   ss << " -> (" << absl::StrJoin(affine_expr_strings, ", ") << ")>";
-  auto affine_map_attr = mlir::parseAttribute(ss.str(), context);
+  auto affine_map_attr =
+      mlir::parseAttribute(ss.str(), context->GetMLIRContext());
   if (!affine_map_attr) {
     llvm::errs() << "Failed to parse affine map: " << ss.str() << "\n";
     return false;
@@ -597,8 +598,8 @@ void PrintAffineExprImpl(const AffineExpr affine_expr,
 
 }  // namespace
 
-std::optional<IndexingMap> ParseIndexingMap(llvm::StringRef input,
-                                            MLIRContext* context) {
+std::optional<IndexingMap> ParseIndexingMap(
+    llvm::StringRef input, SymbolicExprContext* symbolic_expr_context) {
   Parser parser(input);
 
   // Parse variable names.
@@ -631,8 +632,8 @@ std::optional<IndexingMap> ParseIndexingMap(llvm::StringRef input,
       llvm::errs() << "Expected an empty indexing map\n";
       return std::nullopt;
     }
-    return IndexingMap{AffineMap::get(context), /*dimensions=*/{},
-                       /*range_vars=*/{}, /*rt_vars=*/{}};
+    return IndexingMap{AffineMap::get(symbolic_expr_context->GetMLIRContext()),
+                       /*dimensions=*/{}, /*range_vars=*/{}, /*rt_vars=*/{}};
   }
 
   if (!parser.ConsumeToken(Token::Kind::kComma) ||
@@ -733,7 +734,8 @@ std::optional<IndexingMap> ParseIndexingMap(llvm::StringRef input,
   symbol_var_names.append(rt_var_names.begin(), rt_var_names.end());
   SmallVector<AffineExpr> affine_exprs;
   if (!ParseAffineExprsWithMLIR(dim_var_names, symbol_var_names,
-                                affine_expr_strs, context, affine_exprs)) {
+                                affine_expr_strs, symbolic_expr_context,
+                                affine_exprs)) {
     llvm::errs() << "Failed to parse affine expressions\n";
     return std::nullopt;
   }
@@ -750,7 +752,8 @@ std::optional<IndexingMap> ParseIndexingMap(llvm::StringRef input,
     constraints.push_back(std::make_pair(expr, bounds));
   }
   auto map = AffineMap::get(dim_vars.size(), range_vars.size() + rt_vars.size(),
-                            affine_map_results, context);
+                            affine_map_results,
+                            symbolic_expr_context->GetMLIRContext());
   return IndexingMap{map, std::move(dim_vars), std::move(range_vars),
                      std::move(rt_vars), constraints};
 }

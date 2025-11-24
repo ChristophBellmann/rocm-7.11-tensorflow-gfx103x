@@ -17,9 +17,9 @@ limitations under the License.
 #define XLA_BACKENDS_CPU_CODEGEN_FUSION_EMITTER_H_
 
 #include "absl/status/statusor.h"
-#include "mlir/IR/MLIRContext.h"
 #include "xla/codegen/emitters/kernel_arguments.h"
-#include "xla/codegen/mlir_kernel_definition.h"
+#include "xla/codegen/mlir_kernel_source.h"
+#include "xla/hlo/analysis/symbolic_expr.h"
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/service/buffer_assignment.h"
 
@@ -28,7 +28,7 @@ namespace xla::cpu {
 emitters::KernelArguments::BufferAlignment GetDefaultBufferAlignment();
 
 absl::StatusOr<MlirKernelDefinition> EmitFusionKernel(
-    mlir::MLIRContext& context, const HloFusionInstruction& fusion,
+    SymbolicExprContext& context, const HloFusionInstruction& fusion,
     const BufferAssignment* buffer_assignment, bool use_unique_c_name);
 
 }  // namespace xla::cpu

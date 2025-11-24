@@ -1003,7 +1003,10 @@ tf_py_strict_test(
 py_strict_library(
     name = "wrap_function",
     srcs = ["wrap_function.py"],
-    visibility = ["//tensorflow:internal"],
+    visibility = [
+        "//tensorflow:internal",
+        "//third_party/py/orbax/export:__subpackages__",
+    ],
     deps = [
         ":context",
         ":function",
@@ -1134,7 +1137,7 @@ cuda_py_strict_test(
         "//tensorflow/python/training:server_lib",
         "//tensorflow/python/util:compat",
         "@absl_py//absl/testing:parameterized",
-        "@pypi_portpicker//:pkg",
+        "@pypi//portpicker",
     ],
 )
 
@@ -1268,7 +1271,7 @@ py_strict_library(
         "//tensorflow/python/autograph/pyct/static_analysis:reaching_fndefs",
         "//tensorflow/python/framework:op_def_registry",
         "//tensorflow/python/framework:ops",
-        "@pypi_gast//:pkg",
+        "@pypi//gast",
     ],
 )
 
