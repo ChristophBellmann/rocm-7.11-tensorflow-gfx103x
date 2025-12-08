@@ -29,6 +29,8 @@ limitations under the License.
 #include <vector>
 
 #include "absl/algorithm/container.h"
+#include "absl/container/flat_hash_set.h"
+#include "absl/container/inlined_vector.h"
 #include "absl/functional/any_invocable.h"
 #include "absl/log/check.h"
 #include "absl/log/log.h"
@@ -48,9 +50,11 @@ limitations under the License.
 #include "xla/debug_options_flags.h"
 #include "xla/executable_run_options.h"
 #include "xla/hlo/builder/xla_computation.h"
+#include "xla/hlo/ir/hlo_module.h"
 #include "xla/layout.h"
 #include "xla/literal.h"
 #include "xla/maybe_owning.h"
+#include "xla/mlir_hlo/mhlo/transforms/passes.h"
 #include "xla/pjrt/distributed/in_memory_key_value_store.h"
 #include "xla/pjrt/distributed/key_value_store_interface.h"
 #include "xla/pjrt/distributed/protocol.pb.h"
@@ -66,6 +70,7 @@ limitations under the License.
 #include "xla/pjrt/gpu/tfrt/tracked_gpu_device_buffer.h"
 #include "xla/pjrt/gpu/tfrt/utils.h"
 #include "xla/pjrt/host_memory_spaces.h"
+#include "xla/pjrt/layout_mode.h"
 #include "xla/pjrt/mlir_to_hlo.h"
 #include "xla/pjrt/pjrt_client.h"
 #include "xla/pjrt/pjrt_common.h"
@@ -96,10 +101,11 @@ limitations under the License.
 #include "xla/stream_executor/stream_executor.h"
 #include "xla/tsl/concurrency/async_value_ref.h"
 #include "xla/tsl/framework/allocator.h"
+#include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/logging.h"
-#include "xla/tsl/platform/status.h"
 #include "xla/tsl/platform/statusor.h"
+#include "xla/tsl/platform/threadpool.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
 #include "tsl/platform/casts.h"
@@ -850,8 +856,8 @@ absl::StatusOr<std::unique_ptr<PjRtBuffer>> TfrtGpuClient::BufferFromHostBuffer(
   absl::InlinedVector<int64_t, 4> tmp_strides;
   if (!byte_strides) {
     tmp_strides.resize(dims.size());
-    TF_RETURN_IF_ERROR(
-        ShapeUtil::ByteStrides(device_shape, absl::MakeSpan(tmp_strides)));
+    TF_RETURN_IF_ERROR(ShapeUtil::UnpackedByteStrides(
+        device_shape, absl::MakeSpan(tmp_strides)));
     byte_strides = tmp_strides;
   }
 
@@ -868,8 +874,8 @@ absl::StatusOr<std::unique_ptr<PjRtBuffer>> TfrtGpuClient::BufferFromHostBuffer(
 
   absl::InlinedVector<int64_t, 4> shape_strides(
       device_shape.dimensions().size());
-  TF_RETURN_IF_ERROR(
-      ShapeUtil::ByteStrides(device_shape, absl::MakeSpan(shape_strides)));
+  TF_RETURN_IF_ERROR(ShapeUtil::UnpackedByteStrides(
+      device_shape, absl::MakeSpan(shape_strides)));
   bool host_and_device_strides_equal =
       (byte_size == 0 || *byte_strides == shape_strides);
 
@@ -1108,8 +1114,8 @@ TfrtGpuClient::BufferFromHostLiteral(const LiteralSlice& literal,
 
         ShapedBuffer shaped_buffer = buffer->AsShapedBuffer(shape, device);
 
-        TF_CHECK_OK(transfer_manager->TransferLiteralToDeviceAsync(
-            stream, literal, shaped_buffer));
+        CHECK_OK(transfer_manager->TransferLiteralToDeviceAsync(stream, literal,
+                                                                shaped_buffer));
 
         absl::Status status = BlockHostUntilDoneWithHostCallback(stream);
         CHECK_OK(status) << "Failed to block host until done";
@@ -1209,7 +1215,8 @@ absl::StatusOr<std::unique_ptr<PjRtClient>> GetTfrtGpuClient(
   TF_ASSIGN_OR_RETURN(
       DeviceTopologyPair device_topology_pair,
       BuildDistributedDevices(
-          pjrt_platform_name, xla_client, options.node_id, options.num_nodes,
+          pjrt_platform_name, xla_client, options.node_id,
+          options.max_inflight_computations, options.num_nodes,
           gpu_run_options.get(), kv_store, options.enable_mock_nccl,
           options.mock_gpu_topology, options.partition_index, absl::Minutes(2),
           absl::Minutes(5)));

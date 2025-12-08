@@ -26,7 +26,6 @@ limitations under the License.
 #include <stack>
 #include <string>
 #include <tuple>
-#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -35,7 +34,6 @@ limitations under the License.
 // IWYU pragma: no_include "llvm/Config/Disassemblers.def.inc"
 // IWYU pragma: no_include "llvm/Config/Targets.def.inc"
 
-#include "absl/cleanup/cleanup.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/flat_hash_set.h"
 #include "absl/log/check.h"
@@ -87,25 +85,23 @@ limitations under the License.
 #include "mlir/Target/LLVMIR/Export.h"
 #include "mlir/Transforms/DialectConversion.h"
 #include "xla/backends/cpu/alignment.h"
-#include "xla/backends/cpu/codegen/cpu_features.h"
+#include "xla/backends/cpu/codegen/builtin_definition_generator.h"
 #include "xla/backends/cpu/codegen/emitters/cpu_fusion_emitter_config.h"
 #include "xla/backends/cpu/codegen/execution_engine.h"
 #include "xla/backends/cpu/codegen/ir_compiler.h"
 #include "xla/backends/cpu/codegen/jit_compiler.h"
-#include "xla/backends/cpu/codegen/object_loader.h"
 #include "xla/backends/cpu/codegen/target_machine_features.h"
 #include "xla/backends/cpu/constant_allocation.h"
 #include "xla/backends/cpu/runtime/function_library.h"
 #include "xla/backends/cpu/runtime/thunk.h"
 #include "xla/backends/cpu/runtime/thunk.pb.h"
-#include "xla/backends/cpu/runtime/thunk_proto_serdes.h"
+#include "xla/backends/cpu/target_machine_options.h"
 #include "xla/backends/cpu/transforms/collectives/all_reduce_combiner.h"
 #include "xla/backends/cpu/transforms/library_rewriter.h"
 #include "xla/backends/cpu/transforms/xnn_graph_fusion.h"
 #include "xla/backends/cpu/xnn_support.h"
 #include "xla/hlo/analysis/alias_info.h"
 #include "xla/hlo/analysis/hlo_ordering.h"
-#include "xla/hlo/analysis/indexed_array_analysis.h"
 #include "xla/hlo/ir/dfs_hlo_visitor_with_default.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_computation.h"
@@ -187,7 +183,6 @@ limitations under the License.
 #include "xla/service/cpu/ir_emitter2.h"
 #include "xla/service/cpu/metrics.h"
 #include "xla/service/cpu/parallel_task_assignment.h"
-#include "xla/service/cpu/runtime_symbol_generator.h"
 #include "xla/service/cpu/small_while_loop_hoisting_pass.h"
 #include "xla/service/cpu/thunk_emitter.h"
 #include "xla/service/cpu_gpu_shape_verifier.h"
@@ -234,7 +229,6 @@ limitations under the License.
 #include "xla/stream_executor/stream_executor.h"
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/errors.h"
-#include "xla/tsl/platform/status.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/tsl/platform/threadpool.h"
 #include "xla/util.h"
@@ -304,8 +298,8 @@ ModuleComputationsTransitivelyContainCustomCall(const HloModule& module) {
   std::unique_ptr<CallGraph> call_graph = CallGraph::Build(&module);
 
   // Can never fail because we always return an OK status from the visitor.
-  TF_CHECK_OK(call_graph->VisitNodes([&custom_call_map](
-                                         const CallGraphNode& node) {
+  CHECK_OK(call_graph->VisitNodes([&custom_call_map](
+                                      const CallGraphNode& node) {
     const HloComputation* computation = node.computation();
 
     for (const HloInstruction* instruction : computation->instructions()) {
@@ -489,6 +483,7 @@ std::unique_ptr<HloPassFix<HloPassPipeline>> CreateSimplificationPipeline(
   options.set_executing_on_cpu(true);
   options.set_enable_onednn_support(use_onednn_custom_call);
   options.set_rewrite_no_op_bitcast_convert_to_bitcast(true);
+  options.set_enable_conditional_simplification(true);
   pipeline->AddPass<AlgebraicSimplifier>(options);
   pipeline->AddPass<SortSimplifier>();
   pipeline->AddPass<HloDCE>();
@@ -505,10 +500,25 @@ std::unique_ptr<HloPassFix<HloPassPipeline>> CreateSimplificationPipeline(
       !absl::c_contains(module->config()
                             .debug_options()
                             .xla_cpu_experimental_xnn_fusion_type(),
+                        DebugOptions::LIBRARY_FUSION_TYPE_REDUCE) &&
+      !absl::c_contains(module->config()
+                            .debug_options()
+                            .xla_cpu_experimental_ynn_fusion_type(),
                         DebugOptions::LIBRARY_FUSION_TYPE_REDUCE)) {
-    // Needs to happen after algebraic simplifier.
     pipeline->AddPass<TreeReductionRewriter>();
   }
+
+#ifdef XLA_YNNPACK
+  if (absl::c_contains(module->config()
+                           .debug_options()
+                           .xla_cpu_experimental_ynn_fusion_type(),
+                       DebugOptions::LIBRARY_FUSION_TYPE_REDUCE)) {
+    pipeline->AddPass<TreeReductionRewriter>(
+        /*reduce_window_size=*/32, [](const HloInstruction* hlo) {
+          return !IsReduceOpOffloadedToYnn(hlo);
+        });
+  }
+#endif
 
   // BatchNormExpander can create zero-sized ops, so zero-sized HLO
   // elimination has to come after that pass.
@@ -616,10 +626,14 @@ absl::Status CpuCompiler::RunHloPassesThroughLayoutAssn(
         /*update_domain=*/false,
         /*composites_to_preserve=*/absl::flat_hash_set<std::string>{},
         /*uniquify_channel_ids=*/false,
-        /*should_inline=*/
-        [](const xla::CallGraph& call_graph, xla::HloInstruction* instruction) {
-          return absl::StrContains(instruction->to_apply()->name(),
-                                   sdy::kInlineableManualComputationFuncName);
+        /*override_policy=*/
+        [](const xla::CallGraph& call_graph,
+           const xla::HloInstruction* instruction) {
+          if (absl::StrContains(instruction->to_apply()->name(),
+                                sdy::kInlineableManualComputationFuncName)) {
+            return CallInliner::InlineOverridePolicy::kAllowInline;
+          }
+          return CallInliner::InlineOverridePolicy::kProhibitInline;
         });
     TF_RETURN_IF_ERROR(spmd_pipeline.Run(module).status());
   } else {
@@ -743,8 +757,11 @@ absl::Status CpuCompiler::RunHloPassesThroughLayoutAssn(
   // BF16/F8 lowering for most ops.
   CpuFloatSupport bf16_support(BF16, call_library_for_dot);
 #ifdef XLA_ONEDNN
+  bool use_onednn_graph =
+      module->config().debug_options().xla_cpu_use_onednn() &&
+      IsOneDnnCompatible(is_aot_compile);
   OneDnnFloatSupport onednn_bf16_support(BF16);
-  if (use_onednn_custom_call) {
+  if (use_onednn_custom_call || use_onednn_graph) {
     pipeline.AddPass<FloatNormalization>(&onednn_bf16_support);
   } else {
     pipeline.AddPass<FloatNormalization>(&bf16_support);
@@ -866,7 +883,6 @@ absl::Status CpuCompiler::RunHloPassesThroughLayoutAssn(
   pipeline.AddPass<TopkRewriter>([](const HloSortInstruction* sort, int64_t) {
     return sort->operand(0)->shape().element_type() == F32;
   });
-  pipeline.AddPass<IndexedArrayAnalysisPrinterPass>();
   pipeline.AddPass<TransposeFolding>(
       [&](const HloInstruction& dot, int64_t operand) -> absl::StatusOr<bool> {
         if (DotImplementationCanHandleTranspose(dot, *target_machine_features,
@@ -1005,8 +1021,9 @@ absl::Status CpuCompiler::RunHloPassesAfterLayoutAssn(
     pipeline.AddPass<FusionWrapper>(use_experimental_loop_fusion);
   }
 
+  AliasInfo alias_info;
   if (use_multi_output_fusion) {
-    pipeline.AddPass<CpuMultiOutputFusion>();
+    pipeline.AddPass<CpuMultiOutputFusion>(&alias_info);
     pipeline.AddPass<TupleSimplifier>();
   }
 
@@ -1043,6 +1060,7 @@ absl::Status CpuCompiler::RunHloPassesAfterLayoutAssn(
     // oneDNN support is currently enabled only when thunk runtime is turned off
     options.set_enable_onednn_support(use_onednn_custom_call);
     options.set_rewrite_no_op_bitcast_convert_to_bitcast(true);
+    options.set_enable_conditional_simplification(true);
     pipeline.AddPass<AlgebraicSimplifier>(options);
     pipeline.AddPass<HloDCE>();
     pipeline.AddPass<HloCSE>(/*is_layout_sensitive=*/true);
@@ -1069,7 +1087,6 @@ absl::Status CpuCompiler::RunHloPassesAfterLayoutAssn(
   pipeline.AddPass<OptimizeInputOutputBufferAlias>(true);
 
   // If enabled we'll use more precise region based analysis for copy removal.
-  AliasInfo alias_info;
   if (debug_options.xla_cpu_copy_insertion_use_region_analysis()) {
     pipeline.AddPass<CopyInsertion>(
         &alias_info,
@@ -1205,12 +1222,20 @@ absl::StatusOr<std::unique_ptr<HloModule>> CpuCompiler::RunHloPasses(
         module->config().debug_options().xla_backend_extra_options());
     llvm_ir::LLVMCommandLineOptionsLock llvm_lock(llvm_options);
 
+    // Use default target machine options if not specified in the target config.
+    TargetMachineOptions target_machine_options(
+        module->config().debug_options());
+    if (options.cpu_target_config &&
+        options.cpu_target_config->cpu_target_machine_options) {
+      target_machine_options =
+          options.cpu_target_config->cpu_target_machine_options.value();
+    }
+
     TF_ASSIGN_OR_RETURN(
         jit_target_machine,
-        IrCompiler::InferTargetMachine(
-            CompilerTargetOptions(config),
-            IrCompiler::GetCodeGenOptLevel(config),
-            CpuFeatureFromString(config.debug_options().xla_cpu_max_isa())));
+        IrCompiler::InferTargetMachine(CompilerTargetOptions(config),
+                                       IrCompiler::GetCodeGenOptLevel(config),
+                                       target_machine_options));
   }
 
   TF_RETURN_IF_ERROR(RunHloPasses(module.get(), /*is_aot_compile=*/false,
@@ -1675,7 +1700,7 @@ CpuCompiler::CompileCpuExecutable(
   // Definition generator to link with XLA:CPU host runtime symbols.
   ExecutionEngine::DefinitionGenerator definition_generator =
       [](const llvm::DataLayout& data_layout) {
-        return std::make_unique<RuntimeSymbolGenerator>(data_layout);
+        return std::make_unique<BuiltinDefinitionGenerator>(data_layout);
       };
 
   std::unique_ptr<LlvmMultipleModuleCompiler> llvm_module_compiler;
@@ -1986,12 +2011,13 @@ CpuCompiler::CompileCpuExecutable(
   TF_ASSIGN_OR_RETURN(std::vector<ConstantAllocation> constants,
                       CreateConstantAllocations(*assignment));
 
-  TargetMachineOptionsProto target_machine_options_proto;
-  target_machine_options_proto.set_triple(
-      target_machine->getTargetTriple().getTriple());
-  target_machine_options_proto.set_cpu(target_machine->getTargetCPU());
-  target_machine_options_proto.set_features(
-      target_machine->getTargetFeatureString());
+  // We don't use the target machine options from the
+  // CompileOptions::target_config field as we consider TargetMachine to be the
+  // source of truth at this point. This is because the AOT path might set its
+  // own target machine options.
+  TargetMachineOptions target_machine_options(
+      target_machine->getTargetTriple().normalize(),
+      target_machine->getTargetCPU(), target_machine->getTargetFeatureString());
 
   TF_ASSIGN_OR_RETURN(
       auto cpu_executable,
@@ -1999,7 +2025,7 @@ CpuCompiler::CompileCpuExecutable(
           std::move(function_library), std::move(assignment), std::move(module),
           std::move(thunks), std::move(constants),
           std::move(hlo_profile_printer_data), std::move(hlo_profile_index_map),
-          std::move(target_machine_options_proto)));
+          std::move(target_machine_options)));
 
   // Save object files to be able to export them to AOT compilation
   // result.
@@ -2040,12 +2066,19 @@ absl::StatusOr<std::unique_ptr<Executable>> CpuCompiler::RunBackend(
       module->config().debug_options().xla_backend_extra_options());
   llvm_ir::LLVMCommandLineOptionsLock llvm_lock(llvm_options);
 
+  TargetMachineOptions target_machine_options(module->config().debug_options());
+  if (options.cpu_target_config &&
+      options.cpu_target_config->cpu_target_machine_options) {
+    target_machine_options =
+        options.cpu_target_config->cpu_target_machine_options.value();
+  }
+
   // Options for compiling LLVM IR to machine code.
   IrCompiler::Options ir_compiler_options{
       /*optimization_level=*/IrCompiler::GetCodeGenOptLevel(module->config()),
       /*optimize_for_size=*/options::OptimizeForSizeRequested(module->config()),
-      /*max_cpu_isa=*/
-      CpuFeatureFromString(module->config().debug_options().xla_cpu_max_isa()),
+      /*target_machine_options=*/
+      target_machine_options,
       /*fast_math_flags=*/llvm_ir::GetCpuFastMathFlags(module->config()),
       /*disable_expensive_passes=*/
       module->config().debug_options().xla_llvm_disable_expensive_passes(),
@@ -2070,10 +2103,6 @@ absl::StatusOr<std::unique_ptr<Executable>> CpuCompiler::RunBackend(
       std::unique_ptr<CpuExecutable> cpu_executable,
       CompileCpuExecutable(std::move(module), thunk_emitter_options,
                            std::move(ir_compiler)));
-
-  AliasInfo alias_info;
-  cpu_executable->set_debug_info(
-      cpu_executable->buffer_assignment().StatsString(&alias_info));
 
   VLOG(1) << "Compilation finished";
   cpu_executable->Finalize();
@@ -2183,12 +2212,15 @@ CpuCompiler::CompileAheadOfTimeThunks(
       /*compile_copy_as_llvm_kernel=*/aot_options.compile_copy_as_llvm_kernel(),
       /*is_aot_compilation=*/true};
 
+  TargetMachineOptions target_machine_options(
+      triple.normalize(), target_machine->getTargetCPU(),
+      target_machine->getTargetFeatureString());
+
   IrCompiler::Options ir_compiler_options = {
       /*optimization_level=*/target_machine->getOptLevel(),
       /*optimize_for_size=*/
       options::OptimizeForSizeRequested(module->config()),
-      /*max_cpu_isa=*/
-      CpuFeatureFromString(module->config().debug_options().xla_cpu_max_isa()),
+      /*target_machine_options=*/target_machine_options,
       /*fast_math_flags=*/llvm_ir::GetCpuFastMathFlags(module->config()),
       /*disable_expensive_passes=*/
       module->config().debug_options().xla_llvm_disable_expensive_passes(),
@@ -2237,7 +2269,7 @@ CpuCompiler::CompileAheadOfTimeThunks(
       cpu_executable->get_compiled_symbols_proto(), thunk_sequence,
       std::move(*cpu_executable).consume_function_library(),
       std::move(executable_hlo_profile_printer_data),
-      cpu_executable->target_machine_options());
+      cpu_executable->target_machine_options().ToProto());
 }
 
 se::Platform::Id CpuCompiler::PlatformId() const {
@@ -2278,9 +2310,11 @@ absl::StatusOr<std::unique_ptr<AotCompilationResult>> CpuCompiler::Export(
   TF_ASSIGN_OR_RETURN(auto compiled_symbols,
                       GetCompiledSymbolsFromProto(compiled_symbols_proto));
 
-  TF_ASSIGN_OR_RETURN(auto function_library,
-                      LoadFunctionLibrary(compiled_symbols, obj_files,
-                                          &cpu_executable->module()));
+  TF_ASSIGN_OR_RETURN(
+      auto function_library,
+      LoadFunctionLibrary(compiled_symbols, obj_files,
+                          &cpu_executable->module(),
+                          cpu_executable->target_machine_options()));
 
   return CpuAotCompilationResult::Create(
       &cpu_executable->module(), &cpu_executable->buffer_assignment(),
@@ -2288,7 +2322,7 @@ absl::StatusOr<std::unique_ptr<AotCompilationResult>> CpuCompiler::Export(
       std::move(compiled_symbols_proto), *thunk_sequence,
       std::move(function_library),
       std::move(executable_hlo_profile_printer_data),
-      cpu_executable->target_machine_options());
+      cpu_executable->target_machine_options().ToProto());
 }
 
 absl::StatusOr<std::unique_ptr<AotCompilationResult>>
@@ -2320,10 +2354,12 @@ absl::StatusOr<std::unique_ptr<BufferAssignment>>
 CpuCompiler::CreateBufferAssignment(const HloModule& module) const {
   // Run buffer allocation on the HLO graph.
   AliasInfo alias_info;
+  BufferAssigner::Options opts;
+  opts.allocate_buffers_for_constants = true;
   return BufferAssigner::Run(
       &module, std::make_unique<SequentialHloOrdering>(module.schedule()),
       BufferSizeBytesFunction(), &alias_info, memory_alignment,
-      /*allocate_buffers_for_constants=*/true);
+      std::move(opts));
 }
 
 }  // namespace cpu

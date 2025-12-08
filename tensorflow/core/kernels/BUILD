@@ -565,7 +565,7 @@ cc_library(
         "//tensorflow/core/platform:tensor_float_32_hdr_lib",
         "//tensorflow/core/util:determinism_for_kernels",
         "//tensorflow/core/util:env_var",
-        "@local_xla//xla/stream_executor:numeric_options",
+        "@local_xla//xla/stream_executor:engine_options",
         "@local_xla//xla/tsl/util:determinism_for_kernels",
     ] + if_static(["//tensorflow/core/platform:tensor_float_32_utils"]),
 )
@@ -2458,6 +2458,7 @@ cc_library(
         "//tensorflow/core:lib",
         "//tensorflow/core:lib_internal",
         "@com_google_absl//absl/container:flat_hash_set",
+        "@com_google_absl//absl/log:check",
     ],
 )
 

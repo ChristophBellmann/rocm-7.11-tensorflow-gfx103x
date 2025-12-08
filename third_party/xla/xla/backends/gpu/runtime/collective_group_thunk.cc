@@ -52,10 +52,9 @@ CollectiveGroupThunk::CollectiveGroupThunk(
     thunks_.emplace_back(std::move(thunk));
   }
 }
-absl::Status CollectiveGroupThunk::Prepare(
-    const PrepareParams& params, ResourceRequestsInterface& resource_requests) {
+absl::Status CollectiveGroupThunk::Prepare(const PrepareParams& params) {
   for (const std::unique_ptr<Thunk>& thunk : thunks_) {
-    TF_RETURN_IF_ERROR(thunk->Prepare(params, resource_requests));
+    TF_RETURN_IF_ERROR(thunk->Prepare(params));
   }
   return absl::OkStatus();
 }
@@ -133,6 +132,17 @@ void CollectiveGroupThunk::ForAllThunksMutable(
   for (const std::unique_ptr<Thunk>& thunk : thunks_) {
     thunk->ForAllThunksMutable(fn);
   }
+}
+
+absl::Status CollectiveGroupThunk::TransformAllNestedThunks(
+    absl::FunctionRef<
+        absl::StatusOr<std::unique_ptr<Thunk>>(std::unique_ptr<Thunk>)>
+        fn) {
+  for (std::unique_ptr<Thunk>& thunk : thunks_) {
+    TF_RETURN_IF_ERROR(thunk->TransformAllNestedThunks(fn));
+    TF_ASSIGN_OR_RETURN(thunk, fn(std::move(thunk)));
+  }
+  return absl::OkStatus();
 }
 
 }  // namespace gpu

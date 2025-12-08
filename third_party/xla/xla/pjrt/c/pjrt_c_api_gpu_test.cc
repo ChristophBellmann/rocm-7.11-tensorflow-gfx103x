@@ -21,7 +21,6 @@ limitations under the License.
 #include <cstring>
 #include <functional>
 #include <memory>
-#include <numeric>
 #include <string>
 #include <thread>  // NOLINT(build/c++11)
 #include <utility>
@@ -30,6 +29,7 @@ limitations under the License.
 
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
+#include "absl/algorithm/container.h"
 #include "absl/cleanup/cleanup.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/log/check.h"
@@ -69,10 +69,7 @@ limitations under the License.
 #include "xla/stream_executor/gpu/gpu_init.h"
 #include "xla/tests/literal_test_util.h"
 #include "xla/tsl/lib/core/status_test_util.h"
-#include "xla/tsl/platform/status.h"
-#include "xla/tsl/platform/status_matchers.h"
 #include "xla/tsl/platform/statusor.h"
-#include "xla/util.h"
 #include "tsl/platform/mem.h"
 
 namespace pjrt {
@@ -100,7 +97,7 @@ class PjrtCApiGpuTest : public PjrtCApiTestBase {
 TEST_F(PjrtCApiGpuTest, CreateViewOfDeviceBuffer) {
   // Prepares a device memory ptr on GPU.
   auto [buffer, buffer_future] = create_iota_buffer();
-  TF_CHECK_OK(buffer_future.Await());
+  CHECK_OK(buffer_future.Await());
   PJRT_Buffer_OpaqueDeviceMemoryDataPointer_Args device_buffer_ptr_args;
   device_buffer_ptr_args.struct_size =
       PJRT_Buffer_OpaqueDeviceMemoryDataPointer_Args_STRUCT_SIZE;
@@ -171,10 +168,10 @@ TEST_F(PjrtCApiGpuTest, CreateViewOfDeviceBuffer) {
   ASSERT_EQ(to_host_error, nullptr);
   xla::Future<> transfer_to_host =
       ::pjrt::ConvertCEventToCppFuture(to_host_args.event, api_);
-  TF_CHECK_OK(transfer_to_host.Await());
+  CHECK_OK(transfer_to_host.Await());
   ASSERT_EQ(literal->data<float>().size(), 4);
   std::vector<float> float_data(4);
-  std::iota(float_data.begin(), float_data.end(), 41.0f);
+  absl::c_iota(float_data, 41.0f);
   EXPECT_TRUE(xla::LiteralTestUtil::Equal(
       xla::LiteralUtil::CreateR1<float>(float_data), *literal));
 }
@@ -208,7 +205,7 @@ class PjrtCApiGpuBufferTest : public PjrtCApiGpuTest {
 
 TEST_F(PjrtCApiGpuBufferTest, CopyRawToHost) {
   auto [buffer, buffer_future] = create_iota_buffer();
-  TF_CHECK_OK(buffer_future.Await());
+  CHECK_OK(buffer_future.Await());
 
   size_t size = buffer_->buffer->GetOnDeviceSizeInBytes().value();
   PJRT_Buffer_CopyRawToHost_Args args;
@@ -359,7 +356,6 @@ TEST_F(PjrtCApiGpuTest, CreateAndDestroyExecuteContext) {
   add_args.extension_start = nullptr;
   add_args.user_data.type_id = 42;
   add_args.user_data.data = &string_data;
-  add_args.user_data.deleter = nullptr;
   add_args.context = create_arg.context;
   EXPECT_EQ(ffi_extension->user_data_add(&add_args), nullptr);
 
@@ -380,13 +376,17 @@ TEST_F(PjrtCApiGpuTest, CreateAndDestroyExecuteContext) {
 TEST_F(PjrtCApiGpuTest, DmaMapAndUnmap) {
   size_t dma_size = 1024 * 1024;
   size_t alignment = 1024 * 1024;
-  auto host_dma_ptr = xla::AlignedAlloc(alignment, dma_size);
+  void* host_dma_ptr = tsl::port::AlignedMalloc(dma_size, alignment);
+  auto host_dma_ptr_deleter =
+      absl::Cleanup([host_dma_ptr, dma_size, alignment] {
+        tsl::port::AlignedSizedFree(host_dma_ptr, alignment, dma_size);
+      });
 
   PJRT_Client_DmaMap_Args dma_args;
   dma_args.struct_size = PJRT_Client_DmaMap_Args_STRUCT_SIZE;
   dma_args.extension_start = nullptr;
   dma_args.client = client_;
-  dma_args.data = host_dma_ptr.get();
+  dma_args.data = host_dma_ptr;
   dma_args.size = dma_size;
   PJRT_Error* dma_error = api_->PJRT_Client_DmaMap(&dma_args);
   ASSERT_EQ(dma_error, nullptr);
@@ -396,7 +396,7 @@ TEST_F(PjrtCApiGpuTest, DmaMapAndUnmap) {
   unmap_args.struct_size = PJRT_Client_DmaUnmap_Args_STRUCT_SIZE;
   unmap_args.extension_start = nullptr;
   unmap_args.client = client_;
-  unmap_args.data = host_dma_ptr.get();
+  unmap_args.data = host_dma_ptr;
   PJRT_Error* unmap_error = api_->PJRT_Client_DmaUnmap(&unmap_args);
   ASSERT_EQ(unmap_error, nullptr);
   MakeErrorDeleter(api_)(unmap_error);

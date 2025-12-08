@@ -54,6 +54,7 @@ cc_library(
     deps = [
         "//xla:shape_util",
         "//xla:util",
+        "//xla:xla_data_proto_cc",
         "//xla/tsl/platform:logging",
         "@XNNPACK//ynnpack",
         "@com_google_absl//absl/base:core_headers",
@@ -91,6 +92,7 @@ cc_library(
         ":ynn_interop",
         "//xla:shape_util",
         "//xla/backends/cpu/runtime:thunk",
+        "//xla/hlo/ir:hlo",
         "//xla/runtime:buffer_use",
         "//xla/runtime:object_pool",
         "//xla/service:buffer_assignment",
@@ -129,6 +131,7 @@ ynn_cc_test(
         "//xla/backends/cpu/runtime:buffer_allocations",
         "//xla/backends/cpu/runtime:thunk",
         "//xla/backends/cpu/runtime:thunk_testlib",
+        "//xla/hlo/ir:hlo",
         "//xla/tsl/concurrency:async_value",
         "//xla/tsl/platform:env",
         "//xla/tsl/platform:statusor",

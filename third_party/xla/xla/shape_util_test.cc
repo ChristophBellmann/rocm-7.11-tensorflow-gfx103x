@@ -15,21 +15,21 @@ limitations under the License.
 
 #include "xla/shape_util.h"
 
-#include <algorithm>
 #include <cstddef>
 #include <cstdint>
-#include <numeric>
 #include <optional>
 #include <utility>
 #include <variant>
 #include <vector>
 
 #include <gtest/gtest.h>
+#include "absl/algorithm/container.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_join.h"
 #include "absl/types/span.h"
+#include "google/protobuf/text_format.h"
 #include "xla/hlo/testlib/test.h"
 #include "xla/layout.h"
 #include "xla/layout_util.h"
@@ -40,7 +40,6 @@ limitations under the License.
 #include "xla/tsl/platform/threadpool.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/protobuf.h"
 
 namespace xla {
 namespace {
@@ -342,12 +341,21 @@ TEST(ShapeUtilTest, ByteSizeOfWithoutPadding) {
   EXPECT_EQ(1600, ShapeUtil::ByteSizeOf(ShapeUtil::MakeShape(C64, {10, 20})));
 }
 
-TEST(ShapeUtilTest, ByteStrides) {
+TEST(ShapeUtilTest, UnpackedByteStrides) {
   Shape shape1 = ShapeUtil::MakeShape(F32, {3, 5, 7});
   Shape shape2 = ShapeUtil::MakeShape(F16, {5, 7, 9});
+  Shape shape3 = ShapeUtil::MakeShape(S4, {2, 4});
+  shape3.mutable_layout()->set_element_size_in_bits(4);
 
-  EXPECT_THAT(*ShapeUtil::ByteStrides(shape1), ElementsAre(140, 28, 4));
-  EXPECT_THAT(*ShapeUtil::ByteStrides(shape2), ElementsAre(126, 18, 2));
+  EXPECT_THAT(*ShapeUtil::UnpackedByteStrides(shape1), ElementsAre(140, 28, 4));
+  EXPECT_THAT(*ShapeUtil::UnpackedByteStrides(shape2), ElementsAre(126, 18, 2));
+  EXPECT_THAT(*ShapeUtil::UnpackedByteStrides(shape3), ElementsAre(4, 1));
+}
+
+TEST(ShapeUtilTest, ByteStridesFailsOnFractionalElementSize) {
+  Shape shape = ShapeUtil::MakeShape(S4, {10, 20});
+  shape.mutable_layout()->set_element_size_in_bits(4);
+  EXPECT_THAT(ShapeUtil::ByteStrides(shape), std::nullopt);
 }
 
 TEST(ShapeUtilTest, NilShape) {
@@ -1031,21 +1039,21 @@ TEST(ShapeUtilTest, PermuteDimensionsIgnoringLayout) {
 
 TEST(ShapeUtilTest, PermuteDimensionsLayout) {
   std::vector<int64_t> layout(3);
-  std::iota(layout.begin(), layout.end(), 0);
+  absl::c_iota(layout, 0);
   do {
     Shape s = ShapeUtil::MakeShapeWithDenseLayout(F32, {10, 100, 1000}, layout);
     SCOPED_TRACE(absl::StrCat("s=", ShapeUtil::HumanString(s)));
 
     std::vector<int64_t> permutation(3);
-    std::iota(permutation.begin(), permutation.end(), 0);
+    absl::c_iota(permutation, 0);
     do {
       SCOPED_TRACE(
           absl::StrCat("permutation=", absl::StrJoin(permutation, ",")));
 
       EXPECT_TRUE(ShapeUtil::TransposeIsBitcast(
           s, ShapeUtil::PermuteDimensions(permutation, s), permutation));
-    } while (std::next_permutation(permutation.begin(), permutation.end()));
-  } while (std::next_permutation(layout.begin(), layout.end()));
+    } while (absl::c_next_permutation(permutation));
+  } while (absl::c_next_permutation(layout));
 }
 
 TEST(ShapeUtilTest, UpdateDynamicDimensions) {
@@ -1073,7 +1081,7 @@ TEST(ShapeUtilTest, PermuteDynamicDimensions) {
   SCOPED_TRACE(absl::StrCat("shape=", shape.ToString()));
 
   std::vector<int64_t> permutation(3);
-  std::iota(permutation.begin(), permutation.end(), 0);
+  absl::c_iota(permutation, 0);
   do {
     SCOPED_TRACE(absl::StrCat("permutation=", absl::StrJoin(permutation, ",")));
 
@@ -1083,7 +1091,7 @@ TEST(ShapeUtilTest, PermuteDynamicDimensions) {
       EXPECT_EQ(permuted.is_dynamic_dimension(i),
                 shape.is_dynamic_dimension(permutation[i]));
     }
-  } while (std::next_permutation(permutation.begin(), permutation.end()));
+  } while (absl::c_next_permutation(permutation));
 }
 
 TEST(ShapeUtilTest, PrependMajorDimension) {

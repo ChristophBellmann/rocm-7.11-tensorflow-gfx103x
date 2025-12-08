@@ -230,13 +230,11 @@ Future<> NvshmemCommunicator::AllReduce(
   count = ToRealCount(dtype, count);
   VLOG(3) << absl::StreamFormat(
       "Launch NVSHMEM AllReduce operation on device #%d; send_buffer=%p; "
-      "recv_buffer=%p; dtype=%s; count=%d; reduction_kind=%s; comm=node; "
-      "team=%d;"
-      "stream=%p",
+      "recv_buffer=%p; dtype=%s; count=%d; reduction_kind=%v; comm=node; "
+      "team=%d; stream=%p",
       nvshmem_team_my_pe(NVSHMEM_TEAM_SHARED), send_buffer.opaque(),
       recv_buffer.opaque(), primitive_util::LowercasePrimitiveTypeName(dtype),
-      count, ReductionKindToString(reduction_kind), NVSHMEM_TEAM_SHARED,
-      stream);
+      count, reduction_kind, NVSHMEM_TEAM_SHARED, stream);
 
   switch (dtype) {
     case PrimitiveType::F64: {
@@ -291,6 +289,20 @@ Future<> NvshmemCommunicator::AllReduce(
           uint64, uint64_t, NVSHMEM_TEAM_SHARED,
           se::gpu::AsGpuStreamValue(stream), reduction_kind, source_ptr,
           dest_ptr, count);
+      break;
+    }
+    case PrimitiveType::PRED:
+    case PrimitiveType::U8: {
+      CALL_NVSHMEM_BITWISE_REDUCTION_DATATYPE(
+          uint8, uint8_t, NVSHMEM_TEAM_SHARED,
+          se::gpu::AsGpuStreamValue(stream), reduction_kind, source_ptr,
+          dest_ptr, count);
+      break;
+    }
+    case PrimitiveType::S8: {
+      CALL_NVSHMEM_BITWISE_REDUCTION_DATATYPE(
+          int8, int8_t, NVSHMEM_TEAM_SHARED, se::gpu::AsGpuStreamValue(stream),
+          reduction_kind, source_ptr, dest_ptr, count);
       break;
     }
     default:

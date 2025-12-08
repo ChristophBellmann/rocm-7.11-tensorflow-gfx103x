@@ -52,8 +52,8 @@ limitations under the License.
 #include "xla/stream_executor/device_memory.h"
 #include "xla/stream_executor/device_memory_allocator.h"
 #include "xla/stream_executor/dnn.h"
+#include "xla/stream_executor/engine_options.h"
 #include "xla/stream_executor/event_based_timer.h"
-#include "xla/stream_executor/numeric_options.h"
 #include "xla/stream_executor/platform/initialize.h"
 #include "xla/stream_executor/plugin_registry.h"
 #include "xla/stream_executor/rocm/rocm_platform_id.h"
@@ -63,7 +63,6 @@ limitations under the License.
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/logging.h"
 #include "xla/tsl/platform/macros.h"
-#include "xla/tsl/platform/status.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/tsl/util/determinism.h"
 #include "xla/tsl/util/env_var.h"
@@ -790,19 +789,19 @@ MIOpenSupport::MIOpenSupport(StreamExecutor* parent) : parent_(parent) {
   return_best_algo_only_ = false;
   // but if the env var TF_ROCM_RETURN_BEST_ALGO_ONLY is set, only the best
   // (i.e. most efficient) algorithm will be returned
-  TF_CHECK_OK(tsl::ReadBoolFromEnvVar("TF_ROCM_RETURN_BEST_ALGO_ONLY", false,
-                                      &return_best_algo_only_));
+  CHECK_OK(tsl::ReadBoolFromEnvVar("TF_ROCM_RETURN_BEST_ALGO_ONLY", false,
+                                   &return_best_algo_only_));
 
   // by default, use Find Mode APIs for convolution
   use_immediate_mode_ = false;
   // swich to Find Mode if env var TF_ROCM_USE_IMMEDIATE_MODE is set
 
-  TF_CHECK_OK(tsl::ReadBoolFromEnvVar("TF_ROCM_USE_IMMEDIATE_MODE", false,
-                                      &use_immediate_mode_));
+  CHECK_OK(tsl::ReadBoolFromEnvVar("TF_ROCM_USE_IMMEDIATE_MODE", false,
+                                   &use_immediate_mode_));
 
   bool enable_pooling_cache = false;
-  TF_CHECK_OK(tsl::ReadBoolFromEnvVar("TF_ROCM_BW_POOL_CACHE", false,
-                                      &enable_pooling_cache));
+  CHECK_OK(tsl::ReadBoolFromEnvVar("TF_ROCM_BW_POOL_CACHE", false,
+                                   &enable_pooling_cache));
   if (enable_pooling_cache) m_pooling_cache_allowed = true;
 }
 
@@ -2800,7 +2799,7 @@ absl::Status MIOpenSupport::DoPrepareForCtcLoss(
     absl::Span<const int> labels_data,
     absl::Span<const int> labels_lengths_data,
     absl::Span<const int> input_lengths_data,
-    const NumericOptions& numeric_options, ScratchAllocator* scratch_allocator,
+    const EngineOptions& engine_options, ScratchAllocator* scratch_allocator,
     DeviceMemory<uint8_t>* scratch_memory, int* ctc_loss_algo_id) {
   auto miopen = miopen_->GetHandle(parent_, stream);
 
@@ -2922,7 +2921,7 @@ MIOpenSupport::CreateRnnDescriptor(
     int batch_size, dnn::RnnInputMode input_mode,
     dnn::RnnDirectionMode direction_mode, dnn::RnnMode rnn_mode,
     dnn::DataType data_type, const dnn::AlgorithmConfig& algorithm_config,
-    const NumericOptions& numeric_options, float dropout, uint64_t seed,
+    const EngineOptions& engine_options, float dropout, uint64_t seed,
     ScratchAllocator* state_allocator, bool use_padded_io) {
   // ROCM TODO: batch_size is used in dynamic persistent RNN algorithm and is
   // not supported by MIOpen now.
@@ -3488,7 +3487,7 @@ absl::Status MIOpenSupport::GetConvolveRunners(
     DeviceMemoryBase filter_data, const dnn::BatchDescriptor& output_descriptor,
     DeviceMemoryBase output_data,
     const dnn::ConvolutionDescriptor& convolution_descriptor, bool use_fallback,
-    ScratchAllocator* scratch_allocator, const NumericOptions& numeric_options,
+    ScratchAllocator* scratch_allocator, const EngineOptions& engine_options,
     std::vector<std::unique_ptr<const dnn::ConvRunner>>* out_runners) {
   if (input_type != output_type) {
     return absl::UnimplementedError(
@@ -4270,7 +4269,7 @@ absl::Status ROCmFusedMatmulRunner::gemm(Stream* stream,
                               static_cast<DeviceMemory<T>>(b_data), _ldb,
                               static_cast<DeviceMemory<T>>(a_data), _lda,
                               static_cast<DeviceMemory<T>*>(&c_data), _ldc,
-                              NumericOptions{}, blas::CallContext::kNone);
+                              EngineOptions{}, blas::CallContext::kNone);
 }
 
 template <typename T, typename Tbias = T>
@@ -4348,7 +4347,7 @@ absl::Status MIOpenSupport::GetFusedMatmulRunners(
     dnn::DataType output_type, Stream* stream, bool trans_a, bool trans_b,
     uint64_t m, uint64_t n, uint64_t k, int64_t lda, int64_t ldb, int64_t ldc,
     dnn::ActivationMode activation_mode, bool use_fallback,
-    const NumericOptions& numeric_options,
+    const EngineOptions& engine_options,
     std::vector<std::unique_ptr<const dnn::FusedMatmulRunner>>*
         out_exec_plans) {
   out_exec_plans->clear();
@@ -5167,7 +5166,7 @@ absl::Status MIOpenSupport::GetFusedConvolveRunners(
     const dnn::BatchDescriptor& bias_descriptor,
     const dnn::BatchDescriptor& output_descriptor,
     const dnn::ConvolutionDescriptor& convolution_descriptor, bool use_fallback,
-    dnn::ActivationMode activation_mode, const NumericOptions& numeric_options,
+    dnn::ActivationMode activation_mode, const EngineOptions& engine_options,
     std::vector<std::unique_ptr<const dnn::FusedConvRunner>>* out_exec_plans) {
   VLOG(2) << "MIOpenSupport::GetFusedConvolveRunners";
   VLOG(2) << "filter_descriptor " << filter_descriptor.ndims();
@@ -5200,8 +5199,8 @@ bool UseNhwcLayoutForRocm() {
 #if TF_ROCM_VERSION >= 50100
   static bool is_enabled = [] {
     bool is_enabled = false;
-    TF_CHECK_OK(tsl::ReadBoolFromEnvVar("TF_USE_ROCM_NHWC",
-                                        /*default_val=*/false, &is_enabled));
+    CHECK_OK(tsl::ReadBoolFromEnvVar("TF_USE_ROCM_NHWC",
+                                     /*default_val=*/false, &is_enabled));
     return is_enabled;
   }();
   return is_enabled;

@@ -357,11 +357,34 @@ cc_library(
     tags = [
         "gpu",
         "oneapi-only",
-    ],
+    ] + if_google([
+        # TODO(b/456585142): Currently we don't support building the SYCL backend.
+        "notap",
+        "nobuilder",
+        "manual",
+    ]),
     deps = [
         ":llvm_gpu_backend",
         "//xla/service/llvm_ir:llvm_command_line_options",
         "@llvm-project//llvm:SPIRVCodeGen",
         "@local_tsl//tsl/platform:errors",
+    ],
+)
+
+xla_cc_test(
+    name = "spirv_backend_test",
+    srcs = ["spirv_backend_test.cc"],
+    tags = [
+        "gpu",
+        "oneapi-only",
+    ] + if_google([
+        "notap",
+        "nobuilder",
+        "manual",
+    ]),
+    deps = [
+        ":spirv_backend",
+        "//xla/tests:xla_internal_test_main",
+        "@com_google_googletest//:gtest",
     ],
 )

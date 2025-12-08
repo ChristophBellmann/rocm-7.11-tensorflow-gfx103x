@@ -16,6 +16,7 @@ limitations under the License.
 #include "xla/backends/cpu/ynn_support.h"
 
 #include <algorithm>
+#include <cstdint>
 #include <tuple>
 
 #include "ynnpack/include/ynnpack.h"
@@ -25,7 +26,7 @@ limitations under the License.
 #include "absl/log/check.h"
 #include "absl/log/log.h"
 #include "absl/status/statusor.h"
-#include "xla/backends/cpu/runtime/dot_lib.h"
+#include "xla/backends/cpu/runtime/dot_dims.h"
 #include "xla/backends/cpu/runtime/ynnpack/ynn_interop.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_instruction.h"
@@ -153,7 +154,9 @@ absl::StatusOr<bool> IsDotSupportedByYnn(
   static const absl::NoDestructor<absl::flat_hash_set<
       std::tuple<PrimitiveType, PrimitiveType, PrimitiveType>>>
       kAllowedTypes({
-          {F32, F32, F32},
+          // TODO(b/452693819): We plan to enable this in stages, starting with
+          // int8, and enable f32 later.
+          // {F32, F32, F32},
           // TODO(b/449998002): We don't have fast fp16 kernels yet.
           // {F16, F16, F32},
           {BF16, BF16, F32},
@@ -191,6 +194,13 @@ absl::StatusOr<bool> IsDotSupportedByYnn(
     // matrix dimensions. We could handle this case by fully implementing dot
     // (b/430079105), but we also could just insert dummy dimensions of size 1
     // for the matrix dimensions, so the batch dimensions get handled correctly.
+    return false;
+  }
+
+  if (std::max({dot_canonical_dims.m, dot_canonical_dims.k,
+                dot_canonical_dims.n}) < 8) {
+    // If this dot is small, our overhead is probably too significant.
+    // TODO(b/458529782): This is here as a workaround for an unrelated bug.
     return false;
   }
 
@@ -236,6 +246,37 @@ bool IsReduceOpSupportedByYnn(const HloInstruction* hlo) {
                                             match::Minimum())
                    .WithBinaryOperandsAnyOrder(match::Parameter(0),
                                                match::Parameter(1)));
+}
+
+bool IsReduceOpOffloadedToYnn(const HloInstruction* hlo) {
+  if (!IsReduceOpSupportedByYnn(hlo)) {
+    return false;
+  }
+  const HloInstruction* input = hlo->operand(0);
+  if (ShapeUtil::ElementsIn(input->shape()) < 32 * 1024) {
+    return false;
+  }
+  switch (input->opcode()) {
+    case HloOpcode::kMultiply:
+    case HloOpcode::kBitcast:
+    case HloOpcode::kBroadcast:
+    case HloOpcode::kSlice:
+    case HloOpcode::kConcatenate:
+    case HloOpcode::kConvert:
+    case HloOpcode::kReshape:
+      return false;
+    default: {
+      return true;
+    }
+  }
+}
+
+uint32_t YnnFlags(const DebugOptions& debug_options) {
+  uint32_t flags = 0;
+  if (!debug_options.xla_cpu_enable_platform_dependent_math()) {
+    flags |= YNN_FLAG_CONSISTENT_ARITHMETIC;
+  }
+  return flags;
 }
 
 }  // namespace xla::cpu

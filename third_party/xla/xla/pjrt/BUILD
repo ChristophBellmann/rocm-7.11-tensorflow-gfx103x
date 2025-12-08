@@ -149,6 +149,7 @@ cc_library(
         "//xla:shape_util",
         "//xla:util",
         "//xla:xla_data_proto_cc",
+        "//xla/hlo/ir:hlo",
         "//xla/tsl/concurrency:async_value",
         "//xla/tsl/concurrency:ref_count",
         "//xla/tsl/platform:errors",
@@ -180,7 +181,6 @@ xla_cc_test(
         ":pjrt_client",
         ":pjrt_common",
         ":pjrt_stream_executor_client",
-        "//xla:future",
         "//xla:literal",
         "//xla:literal_util",
         "//xla:shape_util",
@@ -192,7 +192,9 @@ xla_cc_test(
         "//xla/hlo/testlib:test",
         "//xla/service:cpu_plugin",
         "//xla/stream_executor:device_memory_allocator",
+        "//xla/tsl/concurrency:async_value",
         "//xla/tsl/concurrency:ref_count",
+        "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
@@ -277,9 +279,10 @@ xla_cc_test(
         "//xla/pjrt/c:pjrt_c_api_hdrs",
         "//xla/pjrt/c:pjrt_c_api_wrapper_impl",
         "//xla/tsl/lib/core:status_test_util",
+        "//xla/tsl/platform:statusor",
         "//xla/tsl/protobuf:error_codes_proto_impl_cc",
+        "@com_google_absl//absl/status:status_matchers",
         "@com_google_googletest//:gtest_main",
-        "@local_tsl//tsl/platform:status_matchers",
     ],
 )
 
@@ -307,6 +310,7 @@ cc_library(
         "//xla/service:computation_placer_hdr",
         "//xla/service:hlo_cost_analysis",
         "//xla/tsl/framework:allocator",
+        "//xla/tsl/lib/gtl:int_type",
         "//xla/tsl/platform:errors",
         "//xla/tsl/platform:statusor",
         "//xla/tsl/protobuf:coordination_service_proto_cc",
@@ -350,6 +354,7 @@ cc_library(
     deps = [
         ":pjrt_client",
         ":pjrt_compiler",
+        "//xla:literal",
         "//xla:shape_util",
         "//xla:xla_data_proto_cc",
         "//xla/backends/cpu:alignment",
@@ -358,6 +363,7 @@ cc_library(
         "//xla/hlo/parser:hlo_parser",
         "//xla/hlo/testlib:test",
         "//xla/tests:literal_test_util",
+        "//xla/tsl/lib/core:status_test_util",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/types:span",
@@ -414,10 +420,10 @@ cc_library(
         "//xla/pjrt/proto:compile_options_proto_cc",
         "//xla/pjrt/proto:executable_metadata_proto_cc",
         "//xla/pjrt/proto:execute_options_proto_cc",
+        "//xla/runtime:device_id",
         "//xla/service:buffer_assignment",
         "//xla/service:compiler",
         "//xla/service:computation_layout",
-        "//xla/service:global_device_id",
         "//xla/service:hlo_cost_analysis",
         "//xla/service:hlo_proto_cc",
         "//xla/service:hlo_value",
@@ -479,6 +485,7 @@ cc_library(
         "//xla/hlo/builder:xla_computation",
         "//xla/pjrt/proto:pjrt_partial_program_proto_cc",
         "//xla/pjrt/proto:topology_description_proto_cc",
+        "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/log",
@@ -522,6 +529,7 @@ cc_library(
     deps = [
         "//xla/pjrt/proto:pjrt_value_type_proto_cc",
         "//xla/tsl/lib/gtl:int_type",
+        "@com_google_absl//absl/container:inlined_vector",
     ],
 )
 
@@ -693,6 +701,7 @@ cc_library(
         "//xla/client:local_client",
         "//xla/hlo/builder:xla_computation",
         "//xla/hlo/ir:hlo",
+        "//xla/mlir_hlo:mhlo_passes",
         "//xla/pjrt/distributed:protocol_proto_cc",
         "//xla/pjrt/dump",
         "//xla/pjrt/profiling:device_time_measurement",
@@ -712,7 +721,6 @@ cc_library(
         "//xla/service/gpu:gpu_executable_run_options",
         "//xla/stream_executor:device_memory",
         "//xla/stream_executor:device_memory_allocator",
-        "//xla/stream_executor:event",
         "//xla/stream_executor:stream",
         "//xla/tsl/concurrency:async_value",
         "//xla/tsl/concurrency:ref_count",
@@ -720,7 +728,6 @@ cc_library(
         "//xla/tsl/platform:env",
         "//xla/tsl/platform:errors",
         "//xla/tsl/platform:logging",
-        "//xla/tsl/platform:status",
         "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/base",
@@ -885,6 +892,15 @@ cc_library(
         "@com_google_absl//absl/strings:string_view",
         "@com_google_absl//absl/types:span",
         "@local_tsl//tsl/platform:fingerprint",
+    ],
+)
+
+cc_library(
+    name = "tpu_constants",
+    hdrs = ["tpu_constants.h"],
+    visibility = internal_visibility([":friends"]),
+    deps = [
+        "@com_google_absl//absl/strings:string_view",
     ],
 )
 
@@ -1058,7 +1074,6 @@ cc_library(
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/synchronization",
         "@local_tsl//tsl/platform:logging",
-        "@local_tsl//tsl/platform:status",
     ],
 )
 
@@ -1222,7 +1237,6 @@ xla_cc_test(
         ":raw_buffer",
         "//xla/tsl/concurrency:ref_count",
         "//xla/tsl/platform:errors",
-        "//xla/tsl/platform:status_matchers",
         "//xla/tsl/platform:test",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:status_matchers",
@@ -1245,6 +1259,7 @@ cc_library(
 cc_library(
     name = "async_work_runner",
     hdrs = ["async_work_runner.h"],
+    visibility = internal_visibility([":friends"]),
     deps = [
         "//xla/tsl/concurrency:async_value",
         "//xla/tsl/concurrency:ref_count",
@@ -1327,11 +1342,10 @@ xla_cc_test(
         "//xla/pjrt/plugin/xla_cpu:cpu_topology",
         "//xla/pjrt/plugin/xla_cpu:cpu_topology_description",
         "//xla/tsl/lib/core:status_test_util",
-        "//xla/tsl/platform:status_matchers",
         "//xla/tsl/util/proto:proto_matchers",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status",
-        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/status:status_matchers",
         "@com_google_absl//absl/strings:string_view",
         "@com_google_googletest//:gtest",
         "@com_google_googletest//:gtest_main",

@@ -37,24 +37,24 @@ class GpuCostModelStatsCollection : public HloModulePass {
   explicit GpuCostModelStatsCollection(
       const se::DeviceDescription& d,
       const GpuHloCostAnalysis::Options& cost_analysis_options,
-      SymbolicExprContext* symbolic_expr_context)
+      mlir::MLIRContext* mlir_context)
       : device_info_(d),
         cost_analysis_(cost_analysis_options, device_info_),
-        symbolic_expr_context_(symbolic_expr_context) {}
+        mlir_context_(mlir_context) {}
 
   absl::string_view name() const override {
     return "gpu_cost_model_stats_collection";
   }
 
-  using HloPassInterface::Run;
-  absl::StatusOr<bool> Run(
+ protected:
+  absl::StatusOr<bool> RunImpl(
       HloModule* module,
       const absl::flat_hash_set<absl::string_view>& execution_threads) override;
 
  private:
   se::DeviceDescription device_info_;
   GpuHloCostAnalysis cost_analysis_;
-  SymbolicExprContext* symbolic_expr_context_;
+  mlir::MLIRContext* mlir_context_;
 };
 
 }  // namespace gpu

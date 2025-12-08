@@ -26,10 +26,12 @@ limitations under the License.
 #include "absl/base/thread_annotations.h"
 #include "absl/container/flat_hash_set.h"
 #include "absl/log/check.h"
+#include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 #include "absl/synchronization/mutex.h"
 #include "absl/types/span.h"
+#include "xla/client/executable_build_options.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/service/buffer_assignment.h"
 #include "xla/service/computation_layout.h"
@@ -273,7 +275,7 @@ class Executable {
     CHECK_EQ(hlo_profile_printer_data_.get() == nullptr,
              hlo_profile_index_map_.get() == nullptr);
   }
-  virtual ~Executable() {}
+  virtual ~Executable() = default;
 
   // Enqueues the compilation result on the provided stream, passing the given
   // arguments. This call is blocking and returns after the execution is done.
@@ -424,10 +426,6 @@ class Executable {
                : nullptr;
   }
 
-  std::string& debug_info() { return debug_info_; }
-  void set_debug_info(const std::string& debug_info) {
-    debug_info_ = debug_info;
-  }
   // Gather unused but donated buffers, return them to the caller of this API.
   // We don't free buffers inside this function since the caller could have
   // different preferences for buffer deallocation. For example, in TensorFlow,
@@ -444,14 +442,24 @@ class Executable {
     return {};
   }
 
- protected:
+  // Gives the executable a chance to dump itself with the given
+  // `ExecutableBuildOptions`
+  // Whether dumping is enabled, and how/where is determined by the
+  // `debug_options`.
+  virtual absl::Status DumpExecutableIfEnabled(
+      const ExecutableBuildOptions& options,
+      const DebugOptions& debug_options) const {
+    return absl::OkStatus();
+  }
+
+ private:
   // HloModule this was compiled from. BufferAssignment keeps pointers to
   // HloInstructions owned by the HloModule so we need to keep the HloModule
   // around if we keep the BufferAssignment around.
   //
   // This member may be nullptr, if the given executable type doesn't need it
   // for execution.
-  const std::shared_ptr<HloModule> hlo_module_;
+  std::shared_ptr<HloModule> hlo_module_;
 
   // Execution count, used to generate a unique filename for each dumped
   // execution.
@@ -460,10 +468,6 @@ class Executable {
   std::unique_ptr<HloProfilePrinterData> hlo_profile_printer_data_;
   std::unique_ptr<HloProfileIndexMap> hlo_profile_index_map_;
 
-  // Generic debug information as a string.
-  std::string debug_info_;
-
- private:
   // The serialized HLO proto. Non-null only if dumping snapshots is enabled.
   // This field may also be only partially set: if only
   // hlo_proto_->buffer_assignment is set and hlo_proto_->hlo_module isn't, the

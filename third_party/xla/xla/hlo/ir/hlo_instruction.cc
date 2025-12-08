@@ -60,6 +60,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_op_metadata.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/ir/hlo_original_value.h"
+#include "xla/hlo/ir/hlo_print_options.h"
 #include "xla/hlo/ir/hlo_sharding.h"
 #include "xla/hlo/ir/hlo_sharding_metadata.h"
 #include "xla/hlo/ir/ptrvec.h"
@@ -82,11 +83,9 @@ limitations under the License.
 #include "xla/tsl/lib/gtl/map_util.h"
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/logging.h"  // IWYU pragma: keep
-#include "xla/tsl/platform/status.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/protobuf.h"
 
 namespace xla {
 
@@ -4530,7 +4529,7 @@ HloInstruction::HloInstruction(HloOpcode opcode, const Shape& shape)
       shape_is_canonicalized_(false),
       shape_(std::make_shared<Shape>(shape)),
       name_(HloOpcodeString(opcode)) {
-  TF_DCHECK_OK(ShapeUtil::ValidateShapeWithOptionalLayout(*shape_));
+  DCHECK_OK(ShapeUtil::ValidateShapeWithOptionalLayout(*shape_));
 }
 
 template <typename HloInstructionPtr>
@@ -6043,7 +6042,13 @@ void HloInstruction::set_output_to_operand_aliasing(
 }
 
 std::shared_ptr<OriginalValue> HloInstruction::original_value() const {
-  return original_value_;
+  if (original_value_ != nullptr || opcode_ != HloOpcode::kGetTupleElement) {
+    return original_value_;
+  }
+  const HloInstruction* tuple = operand(0);
+  return tuple->opcode() == HloOpcode::kTuple
+             ? tuple->operand(tuple_index())->original_value()
+             : nullptr;
 }
 
 void HloInstruction::set_original_value(

@@ -16,6 +16,7 @@ limitations under the License.
 #include "xla/backends/gpu/runtime/all_reduce.h"
 
 #include <algorithm>
+#include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <tuple>
@@ -53,7 +54,6 @@ limitations under the License.
 #include "xla/stream_executor/stream_executor.h"
 #include "xla/tests/literal_test_util.h"
 #include "xla/tsl/platform/errors.h"
-#include "xla/tsl/platform/status_matchers.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/tsl/platform/test.h"
 #include "xla/types.h"
@@ -65,7 +65,6 @@ namespace {
 
 using ::stream_executor::gpu::AllReduceStrategy;
 using ::testing::HasSubstr;
-using ::tsl::testing::StatusIs;
 
 se::StreamExecutor* GetGpuExecutor(int64_t device_ordinal) {
   auto* platform =
@@ -150,32 +149,50 @@ class AllReduceKernelTest : public ::testing::Test,
     }
 
     std::vector<se::DeviceMemoryBase> metadata_buffers;
+    // One for signal and one for input parameters.
+    constexpr int kNumPeerParameters = 2;
+    size_t param_to_peers_size = sizeof(void*) * kNumPeerParameters * num_ranks;
+    std::vector<void*> param_to_peers_ptrs;
+    for (const stream_executor::DeviceMemoryBase& local_input_buffer :
+         local_input_buffers) {
+      param_to_peers_ptrs.push_back(local_input_buffer.opaque());
+    }
+    for (const stream_executor::DeviceMemoryBase& signal_flags_buffer :
+         signal_flags_buffers) {
+      param_to_peers_ptrs.push_back(signal_flags_buffer.opaque());
+    }
 
     for (int i = 0; i < num_ranks; ++i) {
       CollectiveKernelMetadata metadata;
       metadata.rank = i;
 
-      for (int j = 0; j < num_ranks; ++j) {
-        metadata.buffer_root_ptrs[j] = (uint64_t)allocated_buffers[j].opaque();
-      }
-
       if (params_.all_reduce_strategy == AllReduceStrategy::kMultimem) {
         stream_executor::gpu::GpuExecutor* gpu_executor =
             dynamic_cast<stream_executor::gpu::GpuExecutor*>(executors[i]);
         TF_RET_CHECK(gpu_executor != nullptr);
-        TF_ASSIGN_OR_RETURN(void* mapped_memory,
-                            multicast_memory->MapMemory(
-                                allocated_buffers[i].opaque(), gpu_executor));
-        metadata.multicast_buffer_ptr = (uint64_t)mapped_memory;
+        TF_ASSIGN_OR_RETURN(
+            void* mapped_memory,
+            multicast_memory->MapMemory(allocated_buffers[i], gpu_executor));
+        metadata.multicast_buffer_ptr = mapped_memory;
       } else {
-        metadata.multicast_buffer_ptr = 0;
+        metadata.multicast_buffer_ptr = nullptr;
       }
 
+      // First map from parameter to peer ptrs and then metadata.
       metadata_buffers.emplace_back(executors[i]->AllocateArray<uint64_t>(
-          sizeof(CollectiveKernelMetadata)));
+          sizeof(CollectiveKernelMetadata) + param_to_peers_size));
+
+      se::DeviceMemoryBase param_to_peers_ptrs_buffer =
+          metadata_buffers[i].GetByteSlice(sizeof(CollectiveKernelMetadata),
+                                           param_to_peers_size);
+      metadata.param_to_peers =
+          reinterpret_cast<void**>(param_to_peers_ptrs_buffer.opaque());
 
       TF_RETURN_IF_ERROR(streams[i]->Memcpy(&metadata_buffers[i], &metadata,
                                             sizeof(CollectiveKernelMetadata)));
+      TF_RETURN_IF_ERROR(streams[i]->Memcpy(&param_to_peers_ptrs_buffer,
+                                            param_to_peers_ptrs.data(),
+                                            param_to_peers_size));
     }
 
     for (int i = 0; i < num_ranks; ++i) {

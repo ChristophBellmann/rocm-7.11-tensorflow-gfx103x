@@ -22,6 +22,7 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
+#include <gmock/gmock.h>
 #include <gtest/gtest.h>
 #include "absl/container/flat_hash_map.h"
 #include "absl/status/statusor.h"
@@ -142,7 +143,7 @@ ENTRY AddDotsFunc {
                    R"(
 ; CHECK:    custom_call_target="__cublas${{(lt\$matmul|gemm)}}"
     )");
-  TF_ASSERT_OK(filecheck_result.status());
+  ASSERT_OK(filecheck_result.status());
   EXPECT_TRUE(filecheck_result.value());
   EXPECT_TRUE(RunAndCompare(*get_module(), ErrorSpec{1e-3, 1e-3}));
 }
@@ -979,8 +980,13 @@ ENTRY bf16gemm {
   )";
   EXPECT_TRUE(RunAndCompare(hlo_text, ErrorSpec{1e-5, 1e-5}));
 
-  if (!IsCuda() ||
-      HasCudaComputeCapability(se::CudaComputeCapability::Ampere())) {
+  if (!IsCuda()) {
+    MatchOptimizedHlo(hlo_text,
+                      R"(
+; CHECK: {{.*}} custom-call(bf16[12,4]{1,0} {{.*}}, bf16[4,8]{1,0} {{.*}}), custom_call_target="<<CUBLAS_CUSTOM_CALL_TARGET_PLACEHOLDER>>"
+  )",
+                      /*print_operand_shape=*/true);
+  } else if (HasCudaComputeCapability(se::CudaComputeCapability::Ampere())) {
     MatchOptimizedHlo(hlo_text,
                       R"(
 ; CHECK: {{.*}} custom-call(bf16[16,8]{1,0} {{.*}}, bf16[8,8]{1,0} {{.*}}), custom_call_target="<<CUBLAS_CUSTOM_CALL_TARGET_PLACEHOLDER>>"
@@ -1004,8 +1010,13 @@ ENTRY bf16gemm {
   )";
   EXPECT_TRUE(RunAndCompare(hlo_text, ErrorSpec{1e-5, 1e-5}));
 
-  if (!IsCuda() ||
-      HasCudaComputeCapability(se::CudaComputeCapability::Ampere())) {
+  if (!IsCuda()) {
+    MatchOptimizedHlo(hlo_text,
+                      R"(
+    ; CHECK: {{.*}} custom-call(bf16[3,3,4]{2,1,0} {{.*}}, bf16[3,3,2]{2,1,0} {{.*}}), custom_call_target="<<CUBLAS_CUSTOM_CALL_TARGET_PLACEHOLDER>>"
+    )",
+                      /*print_operand_shape=*/true);
+  } else if (HasCudaComputeCapability(se::CudaComputeCapability::Ampere())) {
     MatchOptimizedHlo(hlo_text,
                       R"(
     ; CHECK: {{.*}} custom-call(bf16[3,8,8]{2,1,0} {{.*}}, bf16[3,8,8]{2,1,0} {{.*}}), custom_call_target="<<CUBLAS_CUSTOM_CALL_TARGET_PLACEHOLDER>>"

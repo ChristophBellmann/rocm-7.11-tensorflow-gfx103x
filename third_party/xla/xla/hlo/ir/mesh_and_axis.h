@@ -23,35 +23,66 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
-#include "absl/algorithm/container.h"
 #include "absl/log/check.h"
+#include "absl/strings/str_cat.h"
+#include "absl/strings/str_join.h"
+#include "absl/strings/string_view.h"
 #include "absl/types/span.h"
-#include "llvm/ADT/STLExtras.h"
 #include "xla/array.h"
 #include "xla/hlo/ir/tile_assignment.h"
 #include "xla/xla_data.pb.h"
 
 namespace xla {
 
-// C++ representation for corresponding `OpSharding::Mesh` proto so same
+class AxisRef;
+
+// C++ representation for corresponding OpSharding::Mesh proto so same
 // documentation applies, except device assignment is represented in the array
 // format instead of list of device ids to align with various array specific
-// queries. Note that `TileAssignment` is used instead of `xla::Array` for
-// optimized array representation in iota based cases which is the most common
-// case.
+// queries. `TileAssignment` is used instead of `xla::Array` for optimized array
+// representation in the most common iota-based cases.
+//
+// - device_assignment_.dimensions() represents the axis sizes.
+// - device_assignment_.array() represents the list of device IDs.
+//
+// For maximal mesh, axes_names is empty and device_assignment_ contains the
+// single device id.
 //
 // Example: device_assignment {{3, 0, 2}, {1, 4, 5}} with axes names
-// {"data", "model"} represents a 2 * 3 mesh of 6 devices, with "data" axis of
-// size 2 and "model" axis of size 3.
+// {"data", "model"} represents the mesh ["data"=2, "model"=3].
 class Mesh {
  public:
+  // Empty mesh
+  explicit Mesh() = default;
+
+  // Maximal Mesh
+  explicit Mesh(int64_t device_id) : device_assignment_(device_id) {}
+
+  // Constructs an iota device assignment mesh with given axes sizes and names.
+  //
+  // Example: axes_sizes {2, 3} and axes_names {"data", "model"} represent the
+  // mesh ["data"=2, "model"=3] with iota device list. We use `TileAssignment`
+  // optimized for iota based cases which will not store the entire array.
+  explicit Mesh(absl::Span<const int64_t> axes_sizes,
+                absl::Span<const absl::string_view> axes_names)
+      : Mesh(TileAssignment(axes_sizes), axes_names) {}
+
+  // Constructs a mesh with given device assignment and axes names. This ctor
+  // should **ONLY** be used for non-iota based device assignments.
+  explicit Mesh(Array<int64_t> device_assignment,
+                absl::Span<const absl::string_view> axes_names)
+      : Mesh(TileAssignment(std::make_shared<Array<int64_t>>(
+                 std::move(device_assignment))),
+             axes_names) {}
+
   explicit Mesh(TileAssignment device_assignment,
-                absl::Span<const std::string> axes_names)
-      : device_assignment_(std::move(device_assignment)),
-        axes_names_(axes_names.begin(), axes_names.end()) {
-    CHECK_EQ(device_assignment_.dimensions().size(), axes_names_.size())
-        << "Number of axes names must match number of dimensions in the "
-           "device assignment.";
+                absl::Span<const absl::string_view> axes_names);
+
+  // Returns whether this mesh is a maximal-sharding mesh.
+  //
+  // A maximal-sharding mesh contains an empty axis list and a single device id.
+  bool IsMaximal() const {
+    return axes_names_.empty() && device_assignment_.num_elements() == 1;
   }
 
   bool operator==(const Mesh& other) const {
@@ -61,60 +92,47 @@ class Mesh {
 
   bool operator!=(const Mesh& other) const { return !(*this == other); }
 
-  MeshProto ToProto() const {
-    MeshProto proto;
-    std::vector<MeshProto::MeshAxis> axes;
-    axes.reserve(axes_names_.size());
-
-    for (auto [name, size] :
-         llvm::zip_equal(axes_names_, device_assignment_.dimensions())) {
-      MeshProto::MeshAxis axis;
-      axis.set_name(name);
-      axis.set_size(size);
-      axes.push_back(std::move(axis));
+  std::string ToString() const {
+    std::string mesh_str = "@mesh";
+    // Add the mesh axes names and sizes.
+    std::vector<std::string> formatted_axes_names;
+    formatted_axes_names.reserve(axes_names_.size());
+    for (int64_t i = 0; i < axes_names_.size(); ++i) {
+      formatted_axes_names.push_back(
+          absl::StrCat(axes_names_[i], "=", device_assignment_.dim(i)));
     }
-    proto.mutable_axes()->Assign(axes.begin(), axes.end());
 
+    // Add the device assignment if it is not an iota case.
     std::optional<IotaTileAssignment> iota = device_assignment_.iota();
-    // Only add device ids for non-iota cases.
+    std::string device_assignment_str = "";
     if (!(iota.has_value() && iota->reshape_dims().size() == 1)) {
-      proto.mutable_device_ids()->Assign(device_assignment_.array().begin(),
-                                         device_assignment_.array().end());
+      device_assignment_str =
+          absl::StrCat("(", device_assignment_.ArrayToString(), ")");
     }
-    return proto;
+    absl::StrAppend(&mesh_str, "<", absl::StrJoin(formatted_axes_names, ","),
+                    ">", device_assignment_str);
+    return mesh_str;
   }
 
-  static Mesh FromProto(const MeshProto& proto) {
-    // TODO(b/454008727): Add validators for Mesh and AxisRef FromProto methods.
-    std::vector<int64_t> mesh_axis_sizes;
-    std::vector<std::string> mesh_axis_names;
-    mesh_axis_sizes.reserve(proto.axes_size());
-    mesh_axis_names.reserve(proto.axes_size());
-    for (const auto& axis : proto.axes()) {
-      mesh_axis_sizes.push_back(axis.size());
-      mesh_axis_names.push_back(axis.name());
-    }
-
-    // If device ids are not specified, create a mesh with iota tiling.
-    if (proto.device_ids_size() == 0) {
-      TileAssignment device_assignment =
-          TileAssignment(IotaTileAssignment::Create(mesh_axis_sizes));
-      return Mesh(device_assignment, mesh_axis_names);
-    }
-    // Otherwise, create a mesh with the specific device id ordering.
-    std::vector<int64_t> device_ids(proto.device_ids().begin(),
-                                    proto.device_ids().end());
-    Array<int64_t> device_ids_array(mesh_axis_sizes);
-    absl::c_copy(device_ids, device_ids_array.begin());
-
-    TileAssignment tile_assignment =
-        TileAssignment(std::make_shared<Array<int64_t>>(device_ids_array));
-    return Mesh(tile_assignment, absl::MakeSpan(mesh_axis_names));
+  bool DeviceAssignmentEquals(const Mesh& other) const {
+    return device_assignment_ == other.device_assignment_;
   }
 
-  TileAssignment device_assignment() const { return device_assignment_; }
+  MeshProto ToProto() const;
+
+  static Mesh FromProto(const MeshProto& proto);
+
+  const TileAssignment& device_assignment() const { return device_assignment_; }
+  std::vector<std::string> axis_names() const { return axes_names_; }
+  absl::Span<const int64_t> axis_sizes() const {
+    return device_assignment_.dimensions();
+  }
+  int64_t axis_size(int64_t axis_index) const {
+    return device_assignment_.dim(axis_index);
+  }
 
  private:
+  absl::Status ValidateMesh();
   // Dimensions of the `device_assignment_` array correspond to the axes of the
   // mesh.
   TileAssignment device_assignment_;
@@ -131,6 +149,7 @@ class AxisRef {
   struct SubAxis {
     int64_t pre_size;
     int64_t size;
+    int64_t next_pre_size() const { return pre_size * size; }
   };
 
   // Index corresponding to axis in the mesh. It should be a valid index into
@@ -139,16 +158,9 @@ class AxisRef {
   std::optional<SubAxis> sub_axis_info_;
 
  public:
-  explicit AxisRef(int64_t mesh_axis_index)
-      : mesh_axis_index_(mesh_axis_index) {}
+  explicit AxisRef(int64_t mesh_axis_index);
 
-  explicit AxisRef(int64_t mesh_axis_index, SubAxis sub_axis_info)
-      : mesh_axis_index_(mesh_axis_index), sub_axis_info_(sub_axis_info) {}
-
-  explicit AxisRef(int64_t mesh_axis_index, int64_t sub_axis_pre_size,
-                   int64_t sub_axis_size)
-      : mesh_axis_index_(mesh_axis_index),
-        sub_axis_info_({sub_axis_pre_size, sub_axis_size}) {}
+  explicit AxisRef(int64_t mesh_axis_index, SubAxis sub_axis_info);
 
   bool operator==(const xla::AxisRef& other) const {
     if (mesh_axis_index_ != other.mesh_axis_index_) {
@@ -166,28 +178,40 @@ class AxisRef {
 
   bool operator!=(const xla::AxisRef& other) const { return !(*this == other); }
 
-  AxisRefProto ToProto() const {
-    AxisRefProto proto;
-    proto.set_mesh_axis_index(mesh_axis_index_);
+  std::string ToString(const Mesh& mesh) const {
+    CHECK_GE(mesh_axis_index_, 0);
+    CHECK_LT(mesh_axis_index_, mesh.axis_names().size());
+    std::string axis_str = mesh.axis_names()[mesh_axis_index()];
     if (sub_axis_info_.has_value()) {
-      proto.mutable_sub_axis_info()->set_pre_size(sub_axis_info_->pre_size);
-      proto.mutable_sub_axis_info()->set_size(sub_axis_info_->size);
+      absl::StrAppend(&axis_str, ":(", sub_axis_info_->pre_size, ")",
+                      sub_axis_info_->size);
     }
-    return proto;
+    return axis_str;
   }
 
-  static AxisRef FromProto(const AxisRefProto& proto) {
-    AxisRef axis_ref(proto.mesh_axis_index());
-    if (proto.has_sub_axis_info()) {
-      axis_ref.sub_axis_info_ = {proto.sub_axis_info().pre_size(),
-                                 proto.sub_axis_info().size()};
-    }
-    return axis_ref;
-  }
+  AxisRefProto ToProto() const;
 
+  static AxisRef FromProto(const AxisRefProto& proto);
+
+  bool CanCoexist(const AxisRef& other) const;
+  bool Overlaps(const AxisRef& other) const;
+  bool CanCoexistWithoutOverlap(const AxisRef& other) const;
+
+  // Validates that the given mesh is compatible for this axis ref.
+  absl::Status Validate(const Mesh& mesh) const;
   int64_t mesh_axis_index() const { return mesh_axis_index_; }
   std::optional<SubAxis> sub_axis_info() const { return sub_axis_info_; }
+
+ private:
+  absl::Status ValidateAxisRef();
 };
+
+bool AxesCanCoexistWithoutOverlap(absl::Span<const AxisRef> axes);
+
+// The span of axes is valid if (1) all axes are valid for the given mesh, and
+// (2) the axes can coexist without overlap.
+absl::Status ValidateSpanOfAxes(absl::Span<const AxisRef> axes,
+                                const Mesh& mesh);
 
 }  // namespace xla
 

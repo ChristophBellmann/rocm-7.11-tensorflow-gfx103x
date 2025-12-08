@@ -32,6 +32,7 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/strings/escaping.h"
 #include "absl/strings/match.h"
+#include "absl/strings/str_format.h"
 #include "absl/strings/str_join.h"
 #include "absl/strings/string_view.h"
 #include "absl/strings/substitute.h"
@@ -57,6 +58,7 @@ limitations under the License.
 #include "xla/primitive_util.h"
 #include "xla/service/buffer_assignment.h"
 #include "xla/service/gpu/backend_configs.pb.h"
+#include "xla/service/gpu/launch_dimensions.h"
 #include "xla/service/gpu/target_util.h"
 #include "xla/service/llvm_ir/llvm_util.h"
 #include "xla/service/matmul_indexing_utils.h"
@@ -132,14 +134,6 @@ absl::StatusOr<bool> IsCublasSupportedMatMul(
     default:
       return false;
   }
-}
-const char* const kCusolverCholeskyCallTarget = "__cusolver$cholesky";
-
-bool IsCustomCallToCusolver(const HloInstruction& hlo) {
-  if (hlo.opcode() != HloOpcode::kCustomCall) {
-    return false;
-  }
-  return hlo.custom_call_target() == kCusolverCholeskyCallTarget;
 }
 
 bool IsCustomCallToTopK(const HloInstruction& hlo) {
@@ -767,5 +761,6 @@ DenseDataIntermediate DenseDataIntermediate::FromProto(
   return DenseDataIntermediate::Own(
       std::vector<uint8_t>(data.begin(), data.end()));
 }
+
 }  // namespace gpu
 }  // namespace xla

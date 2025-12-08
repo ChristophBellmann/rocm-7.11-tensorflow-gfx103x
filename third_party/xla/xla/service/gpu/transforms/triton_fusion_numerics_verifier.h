@@ -43,24 +43,24 @@ namespace xla::gpu {
 class TritonFusionNumericsVerifier : public HloModulePass {
  public:
   TritonFusionNumericsVerifier(const DeviceOrDevicelessConfig& config,
-                               SymbolicExprContext* symbolic_expr_context)
-      : config_(config), symbolic_expr_context_(symbolic_expr_context) {}
+                               mlir::MLIRContext* mlir_context)
+      : config_(config), mlir_context_(mlir_context) {}
 
   static absl::string_view Name() { return "triton-numerics-verifier"; }
   absl::string_view name() const override { return Name(); }
-
-  using HloPassInterface::Run;
-  absl::StatusOr<bool> Run(
-      HloModule* module,
-      const absl::flat_hash_set<absl::string_view>& execution_threads) override;
 
   using FusionCacheKey = std::string;
 
   int CacheHitsForTestingOnly() const { return cache_hits_; }
 
+ protected:
+  absl::StatusOr<bool> RunImpl(
+      HloModule* module,
+      const absl::flat_hash_set<absl::string_view>& execution_threads) override;
+
  private:
   DeviceOrDevicelessConfig config_;
-  SymbolicExprContext* symbolic_expr_context_;
+  mlir::MLIRContext* mlir_context_;
 
   // In some models there are many identical fusions. These are cached to avoid
   // expensive recomputations.
@@ -73,7 +73,7 @@ namespace triton_fusion_numerics_pass_internal {
 absl::StatusOr<ScopedShapedBuffer> CompileAndRunFusion(
     AutotunerCompileUtil& util, const HloFusionInstruction& fusion,
     const DeviceOrDevicelessConfig& config, const DebugOptions& debug_opts,
-    bool disable_triton, SymbolicExprContext* symbolic_expr_context);
+    bool disable_triton, mlir::MLIRContext* mlir_context);
 absl::Status CompareBuffers(const ScopedShapedBuffer& current,
                             const ScopedShapedBuffer& expected,
                             const Shape& shape, const DebugOptions& debug_opts,

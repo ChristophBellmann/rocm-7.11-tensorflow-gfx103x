@@ -36,6 +36,7 @@ limitations under the License.
 #include "xla/backends/cpu/runtime/thunk.h"
 #include "xla/backends/cpu/runtime/thunk.pb.h"
 #include "xla/backends/cpu/runtime/thunk_proto_serdes.h"
+#include "xla/backends/cpu/target_machine_options.h"
 #include "xla/hlo/analysis/alias_info.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/ir/hlo_schedule.h"
@@ -82,7 +83,7 @@ CpuAotCompilationResult::Create(
     std::unique_ptr<HloProfilePrinterData> hlo_profile_printer_data,
     TargetMachineOptionsProto target_machine_options) {
   ThunkSequenceSerDesProtobuf thunk_sequence_serdes(
-      &buffer_assignment->Allocations());
+      hlo_module, &buffer_assignment->Allocations());
   TF_ASSIGN_OR_RETURN(ThunkSequenceProto thunk_proto,
                       thunk_sequence_serdes.ToProto(thunks));
 
@@ -143,7 +144,7 @@ CpuAotCompilationResult::CpuAotCompilationResult(
   module_ = hlo_module->Clone();
 
   ThunkSequenceSerDesProtobuf thunk_sequence_serdes(
-      &buffer_assignment->Allocations());
+      hlo_module, &buffer_assignment->Allocations());
   *proto_.mutable_thunk_sequence() = thunks;
 }
 
@@ -181,7 +182,7 @@ CpuAotCompilationResult::LoadExecutable(
   }
 
   ThunkSequenceSerDesProtobuf thunk_sequence_serdes(
-      &buffer_assignment->Allocations());
+      module.get(), &buffer_assignment->Allocations());
   TF_ASSIGN_OR_RETURN(std::unique_ptr<ThunkSequence> thunks,
                       thunk_sequence_serdes.FromProto(proto_.thunk_sequence()));
 
@@ -192,11 +193,15 @@ CpuAotCompilationResult::LoadExecutable(
                       CreateConstantAllocations(*buffer_assignment));
 
   TF_ASSIGN_OR_RETURN(
+      TargetMachineOptions target_machine_options,
+      TargetMachineOptions::FromProto(proto_.target_machine_options()));
+
+  TF_ASSIGN_OR_RETURN(
       cpu_executable,
       CpuExecutable::Create(std::move(function_library_),
                             std::move(buffer_assignment), std::move(module),
                             std::move(*thunks), std::move(constants), nullptr,
-                            nullptr, proto_.target_machine_options()));
+                            nullptr, target_machine_options));
 
   // Dump computation proto state and buffer assignment for
   // GetCompiledMemoryStats results.

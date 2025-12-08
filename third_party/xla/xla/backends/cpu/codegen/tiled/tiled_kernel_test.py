@@ -26,6 +26,17 @@ from xla.codegen.testlib import utilities as testlib_utilities
 create_literal = testlib_utilities.create_literal_from_np
 
 
+class InputSpec:
+
+  def __init__(self, shape: tuple[int, ...]):
+    """Initializes the InputSpec.
+
+    Args:
+      shape: The shape of the input array.
+    """
+    self.shape = shape
+
+
 def get_random_array(shape: tuple[int, ...], dtype: np.dtype) -> np.ndarray:
   rng = np.random.default_rng()
   return rng.uniform(low=-5, high=5, size=shape).astype(dtype)
@@ -35,7 +46,7 @@ def compare_kernel(
     ir: str,
     kernel_name: str,
     num_workgroups: int,
-    input_shapes: Iterable[tuple[int, ...]],
+    input_specs: Iterable[InputSpec],
     output_shape: tuple[int, ...],
     dtype,
     expected_output: Callable[[np.ndarray, ...], np.ndarray],
@@ -51,8 +62,10 @@ def compare_kernel(
       cpu_testlib.JitCompiler(base_testlib.HloModuleConfig()),
   )
 
-  # Simply use a all-ones arrays as inputs to make it easy to debug the kernel.
-  inputs = [np.ones(shape=shape, dtype=dtype) for shape in input_shapes]
+  def get_input(spec: InputSpec):
+    return np.arange(np.prod(spec.shape), dtype=dtype).reshape(spec.shape)
+
+  inputs = [get_input(spec) for spec in input_specs]
 
   input_tensors = [create_literal(input) for input in inputs]
   # Use a random array as the output to ensure all values are written to.
@@ -92,7 +105,7 @@ class XtileLoweringTest(absltest.TestCase):
         ir,
         "tiled_slice",
         1,
-        [(5, 5)],
+        [InputSpec((5, 5))],
         (5, 5),
         np.float32,
         lambda arg: arg.transpose(),
@@ -116,7 +129,7 @@ class XtileLoweringTest(absltest.TestCase):
         ir,
         "tiled_slice",
         1,
-        [(64, 64)],
+        [InputSpec((64, 64))],
         (4, 32),
         np.float32,
         lambda arg: arg[::21, ::2],
@@ -143,7 +156,7 @@ class XtileLoweringTest(absltest.TestCase):
         ir,
         "tiled_transpose",
         8,
-        [(4096, 4096)],
+        [InputSpec((4096, 4096))],
         (4096, 4096),
         np.float32,
         lambda arg: arg.transpose(),
@@ -172,7 +185,7 @@ class XtileLoweringTest(absltest.TestCase):
         ir,
         "add_tranpose",
         8,
-        [(4096, 4096)],
+        [InputSpec((4096, 4096))],
         (4096, 4096),
         np.float32,
         lambda arg: arg + arg.transpose(),
@@ -200,7 +213,7 @@ class XtileLoweringTest(absltest.TestCase):
         ir,
         "dot_single_tile",
         1,
-        [(8, 16), (16, 8)],
+        [InputSpec((8, 16)), InputSpec((16, 8))],
         (8, 8),
         np.float32,
         lambda lhs, rhs: lhs @ rhs,
@@ -229,7 +242,7 @@ class XtileLoweringTest(absltest.TestCase):
         ir,
         "test_dot_scalar_output",
         1,
-        [(8, 16), (16, 8)],
+        [InputSpec((8, 16)), InputSpec((16, 8))],
         (),
         np.float32,
         lambda lhs, rhs: np.tensordot(lhs, rhs, axes=[[1, 0], [0, 1]]),
@@ -262,7 +275,11 @@ class XtileLoweringTest(absltest.TestCase):
         ir,
         "dot_fusion_single_tile",
         1,
-        [(8, 16), (8, 16), (16, 1)],
+        [
+            InputSpec((8, 16)),
+            InputSpec((8, 16)),
+            InputSpec((16, 1)),
+        ],
         (8, 1),
         np.float32,
         lambda lhs_0, lhs_1, rhs: np.tanh((lhs_0 + lhs_1) @ rhs),
@@ -299,7 +316,7 @@ class XtileLoweringTest(absltest.TestCase):
         ir,
         "reduction_add_inner",
         4,
-        [(1024, 32), (1,)],
+        [InputSpec((1024, 32)), InputSpec((1,))],
         (1024,),
         np.int32,
         lambda input, init: np.sum(input, axis=1) + init,
@@ -335,10 +352,10 @@ class XtileLoweringTest(absltest.TestCase):
         ir,
         "reduction_add_outer",
         4,
-        [(1024, 32), (1,)],
+        [InputSpec((1024, 32)), InputSpec((1,))],
         (32,),
         np.float32,
-        lambda input, init: np.sum(input, axis=0) + init,
+        lambda input, init: np.sum(input, axis=0),
     )
 
   def test_reduction_middle(self):
@@ -368,10 +385,10 @@ class XtileLoweringTest(absltest.TestCase):
         ir,
         "reduction_add_middle",
         1,
-        [(8, 4, 2), (1,)],
+        [InputSpec((8, 4, 2)), InputSpec((1,))],
         (8, 2),
         np.float32,
-        lambda input, init: np.sum(input, axis=1) + init,
+        lambda input, init: np.sum(input, axis=1),
     )
 
   def test_reduction_outer_inner(self):
@@ -401,10 +418,60 @@ class XtileLoweringTest(absltest.TestCase):
         ir,
         "reduction_add_outer_inner",
         1,
-        [(8, 4, 2), (1,)],
+        [InputSpec((8, 4, 2)), InputSpec((1,))],
         (4,),
         np.float32,
-        lambda input, init: np.sum(input, axis=(0, 2)) + init,
+        lambda input, init: np.sum(input, axis=(0, 2)),
+    )
+
+  def test_broadcast_in_dim_inner(self):
+    ir = """
+      module @broadcast_in_dim_inner {
+        xtile.entry_func @broadcast_in_dim_inner(
+            %input: memref<4xf32>,
+            %output: memref<32x4xf32>,
+            %tile_id: index) attributes {xtile.tiling_info = #xtile.tiling_info<tile_count:1, tiles_per_workgroup:1>} {
+          %input_tile = xtile.extract %input[%tile_id][4][1] : memref<4xf32> -> tensor<4xf32>
+          %result = stablehlo.broadcast_in_dim %input_tile, dims = [1] : (tensor<4xf32>) -> tensor<32x4xf32>
+          xtile.insert %result into %output[%tile_id, %tile_id][32,4][1,1] : tensor<32x4xf32> -> memref<32x4xf32>
+          xtile.return
+        }
+      }
+    """
+
+    compare_kernel(
+        ir,
+        "broadcast_in_dim_inner",
+        1,
+        [InputSpec((4,))],
+        (32, 4),
+        np.float32,
+        lambda input: np.broadcast_to(input, (32, 4)),
+    )
+
+  def test_broadcast_in_dim_outer(self):
+    ir = """
+      module @broadcast_in_dim_outer {
+        xtile.entry_func @broadcast_in_dim_outer(
+            %input: memref<4xf32>,
+            %output: memref<4x32xf32>,
+            %tile_id: index) attributes {xtile.tiling_info = #xtile.tiling_info<tile_count:1, tiles_per_workgroup:1>} {
+          %input_tile = xtile.extract %input[%tile_id][4][1] : memref<4xf32> -> tensor<4xf32>
+          %result = stablehlo.broadcast_in_dim %input_tile, dims = [0] : (tensor<4xf32>) -> tensor<4x32xf32>
+          xtile.insert %result into %output[%tile_id, %tile_id][4,32][1,1] : tensor<4x32xf32> -> memref<4x32xf32>
+          xtile.return
+        }
+      }
+    """
+
+    compare_kernel(
+        ir,
+        "broadcast_in_dim_outer",
+        1,
+        [InputSpec((4,))],
+        (4, 32),
+        np.float32,
+        lambda input: np.transpose(np.broadcast_to(input, (32, 4))),
     )
 
 

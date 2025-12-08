@@ -26,12 +26,15 @@ limitations under the License.
 
 #include "absl/base/thread_annotations.h"
 #include "absl/container/flat_hash_map.h"
+#include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 #include "absl/synchronization/mutex.h"
 #include "absl/time/time.h"
 #include "absl/types/span.h"
 #include "mlir/IR/BuiltinOps.h"
+#include "xla/backends/gpu/collectives/gpu_clique_key.h"
+#include "xla/backends/gpu/collectives/gpu_cliques.h"
 #include "xla/client/local_client.h"
 #include "xla/executable_run_options.h"
 #include "xla/future.h"
@@ -48,10 +51,10 @@ limitations under the License.
 #include "xla/pjrt/pjrt_executable.h"
 #include "xla/pjrt/pjrt_stream_executor_client.h"
 #include "xla/pjrt/plugin/xla_gpu/xla_gpu_client_options.h"
+#include "xla/pjrt/se_raw_buffer.h"
 #include "xla/pjrt/tracked_device_buffer.h"
 #include "xla/runtime/device_id.h"
 #include "xla/service/computation_placer.h"
-#include "xla/service/global_device_id.h"
 #include "xla/service/gpu/gpu_executable_run_options.h"
 #include "xla/shape.h"
 #include "xla/shape_tree.h"
@@ -140,6 +143,21 @@ class StreamExecutorGpuClient : public xla::PjRtStreamExecutorClient {
       std::optional<absl::Span<const std::optional<Layout>>> device_layouts,
       PjRtMemorySpace* memory_space) override;
 
+  // CrossHostSendBuffers and CrossHostReceiveBuffers are part of the new
+  // cross-host transfers API.
+  absl::StatusOr<std::vector<Future<>>> CrossHostSendBuffers(
+      absl::Span<PjRtBuffer* const> buffers,
+      absl::Span<const PjRtGlobalDeviceId> dst_global_device_ids,
+      std::vector<CrossHostTransferKey> transfer_keys) override;
+
+  absl::StatusOr<std::vector<std::unique_ptr<PjRtBuffer>>>
+  CrossHostReceiveBuffers(
+      xla::PjRtDevice* device, absl::Span<const xla::Shape> shapes,
+      absl::Span<const PjRtGlobalDeviceId> src_global_device_ids,
+      std::vector<CrossHostTransferKey> transfer_keys) override;
+
+  // ScheduleRemoteSend and MakeCrossHostReceiveBuffers are methods implemented
+  // to support the legacy cross-host transfers API.
   void ScheduleRemoteSend(
       PjRtMemorySpace* memory_space,
       tsl::RCReference<CommonPjRtRawBuffer> raw_buffer,
@@ -179,13 +197,33 @@ class StreamExecutorGpuClient : public xla::PjRtStreamExecutorClient {
       bool lookup_addressable_devices) override;
 
  private:
-  absl::StatusOr<absl::flat_hash_map<GlobalDeviceId, IncarnationId>>
-  GetLatestIncarnations(const ExecuteOptions& options);
+  absl::flat_hash_map<GlobalDeviceId, IncarnationId> GetLatestIncarnations(
+      const ExecuteOptions& options);
 
   std::optional<int> num_nodes_;
   const bool abort_collectives_on_failure_ = false;
   std::optional<xla::StreamExecutorGpuTopologyDescription> topology_;
   std::shared_ptr<KeyValueStoreInterface> kv_store_;
+
+  // Helpers for cross host transfers.
+  absl::Duration cross_host_transfer_timeout_ = absl::Minutes(3);
+
+  void ScheduleSendsOnLocalDevice(
+      PjRtDevice* device, std::vector<PjRtBuffer*> buffers,
+      std::vector<PjRtGlobalDeviceId> dst_global_device_ids,
+      std::vector<CrossHostTransferKey> transfer_keys,
+      std::vector<std::shared_ptr<Future<>::Promise>> promises);
+
+  struct PrepareReceiveBufferResult {
+    std::unique_ptr<PjRtBuffer> buffer;
+    tsl::RCReference<CommonPjRtRawBuffer> raw_buffer;
+    LocalDeviceState* local_device;
+    se::Stream* stream;
+    BufferSequencingEventRef definition_event;
+  };
+
+  absl::StatusOr<PrepareReceiveBufferResult> PrepareReceiveBuffer(
+      PjRtDevice* device, Shape shape);
 };
 
 std::vector<std::unique_ptr<PjRtStreamExecutorDevice>> BuildLocalDevices(

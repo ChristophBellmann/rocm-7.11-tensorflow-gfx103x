@@ -16,14 +16,13 @@ limitations under the License.
 #include "xla/service/hlo_runner.h"
 
 #include <cstdint>
-#include <functional>
 #include <memory>
 #include <string>
 #include <utility>
-#include <variant>
 #include <vector>
 
 #include "absl/base/nullability.h"
+#include "absl/functional/any_invocable.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
@@ -33,7 +32,6 @@ limitations under the License.
 #include "xla/executable_run_options.h"
 #include "xla/hlo/ir/hlo_input_output_alias_config.h"
 #include "xla/hlo/ir/hlo_module.h"
-#include "xla/hlo/ir/hlo_module_group.h"
 #include "xla/literal.h"
 #include "xla/literal_util.h"
 #include "xla/service/backend.h"
@@ -51,7 +49,6 @@ limitations under the License.
 #include "xla/shape_tree.h"
 #include "xla/shape_util.h"
 #include "xla/status_macros.h"
-#include "xla/stream_executor/cuda/cuda_compute_capability.h"
 #include "xla/stream_executor/device_description.h"
 #include "xla/stream_executor/device_memory.h"
 #include "xla/stream_executor/device_memory_allocator.h"
@@ -60,7 +57,6 @@ limitations under the License.
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/logging.h"
-#include "xla/tsl/platform/status.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/tsl/platform/threadpool.h"
 
@@ -481,12 +477,12 @@ absl::StatusOr<std::vector<Literal>> HloRunner::ExecuteReplicated(
 }
 
 absl::StatusOr<std::vector<Literal>> HloRunner::ExecuteReplicatedImpl(
-    std::function<absl::StatusOr<std::vector<ScopedShapedBuffer>>(
+    absl::AnyInvocable<absl::StatusOr<std::vector<ScopedShapedBuffer>>(
         const std::vector<ServiceExecutableRunOptions>&,
         const std::vector<absl::Span<const ShapedBuffer* const>>&)>
         execution_helper,
-    std::function<int64_t(int64_t)> argument_count_provider,
-    std::function<const Literal*(int64_t, int64_t)> argument_provider,
+    absl::AnyInvocable<int64_t(int64_t)> argument_count_provider,
+    absl::AnyInvocable<const Literal*(int64_t, int64_t)> argument_provider,
     const ReplicatedExecuteOptions& options,
     DeviceAssignment* device_assignment) {
   std::vector<std::unique_ptr<se::Stream>> streams;
@@ -565,7 +561,7 @@ absl::StatusOr<std::vector<Literal>> HloRunner::ExecuteReplicatedImpl(
         VLOG(1) << "Starting infeed on device " << device;
         for (int64_t step = 1;
              options.infeed_steps < 0 || step <= options.infeed_steps; ++step) {
-          TF_CHECK_OK(backend().transfer_manager()->TransferLiteralToInfeed(
+          CHECK_OK(backend().transfer_manager()->TransferLiteralToInfeed(
               executor, *options.infeed_values[i]));
           if (step % 100 == 0) {
             VLOG(1) << "Infeed step " << step;
@@ -588,7 +584,7 @@ absl::StatusOr<std::vector<Literal>> HloRunner::ExecuteReplicatedImpl(
         for (int64_t step = 1;
              options.infeed_steps < 0 || step <= options.infeed_steps; ++step) {
           Literal literal(options.outfeed_shape);
-          TF_CHECK_OK(backend().transfer_manager()->TransferLiteralFromOutfeed(
+          CHECK_OK(backend().transfer_manager()->TransferLiteralFromOutfeed(
               executor, &literal));
           if (options.outfeed_values) {
             options.outfeed_values->at(i) = std::move(literal);
@@ -671,9 +667,9 @@ absl::StatusOr<std::vector<Literal>> HloRunner::ExecuteReplicated(
 }
 
 absl::StatusOr<std::vector<Literal>> HloRunner::ExecuteReplicated(
-    std::function<OpaqueExecutable*(int64_t)> executable_provider,
-    std::function<int64_t(int64_t)> argument_count_provider,
-    std::function<const Literal*(int64_t, int64_t)> argument_provider,
+    absl::AnyInvocable<OpaqueExecutable*(int64_t)> executable_provider,
+    absl::AnyInvocable<int64_t(int64_t)> argument_count_provider,
+    absl::AnyInvocable<const Literal*(int64_t, int64_t)> argument_provider,
     const ReplicatedExecuteOptions& options,
     DeviceAssignment* device_assignment) {
   DeviceAssignment computation_device_assignment;
@@ -725,7 +721,8 @@ absl::StatusOr<std::vector<Literal>> HloRunner::ExecuteReplicated(
         }
         return results;
       },
-      argument_count_provider, argument_provider, options, device_assignment);
+      std::move(argument_count_provider), std::move(argument_provider), options,
+      device_assignment);
 }
 
 absl::StatusOr<std::vector<Literal>> HloRunner::ExecuteReplicated(

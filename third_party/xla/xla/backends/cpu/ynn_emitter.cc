@@ -19,17 +19,17 @@ limitations under the License.
 #include <cstddef>
 #include <cstdint>
 #include <memory>
-#include <numeric>
 #include <utility>
 #include <vector>
 
 #include "ynnpack/include/ynnpack.h"
+#include "absl/algorithm/container.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/functional/any_invocable.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_format.h"
 #include "absl/types/span.h"
-#include "xla/backends/cpu/runtime/dot_lib.h"
+#include "xla/backends/cpu/runtime/dot_dims.h"
 #include "xla/backends/cpu/runtime/ynnpack/ynn_interop.h"
 #include "xla/backends/cpu/ynn_support.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
@@ -38,7 +38,6 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/literal.h"
-#include "xla/primitive_util.h"
 #include "xla/shape.h"
 #include "xla/stream_executor/device_memory.h"
 #include "xla/tsl/platform/errors.h"
@@ -57,11 +56,8 @@ using TensorIdMap = absl::flat_hash_map<const HloInstruction*, uint32_t>;
 //===----------------------------------------------------------------------===//
 
 static std::vector<size_t> YnnDimensions(const Shape& shape) {
-  std::vector<size_t> dims;
-  for (auto& dim : shape.dimensions()) {
-    dims.push_back(dim);
-  }
-  return dims;
+  absl::Span<const int64_t> dims = shape.dimensions();
+  return {dims.begin(), dims.end()};
 }
 
 //===----------------------------------------------------------------------===//
@@ -262,7 +258,8 @@ static absl::StatusOr<YnnSubgraph> EmitYnnSubgraph(
       YnnSubgraph subgraph, CreateYnnSubgraph([&](ynn_subgraph_t* subgraph) {
         return ynn_create_subgraph(
             /*external_value_ids=*/computation->num_parameters() + 1,
-            /*flags=*/0, subgraph);
+            YnnFlags(computation->parent()->config().debug_options()),
+            subgraph);
       }));
 
   // Traverse fused computation in post-order and define YNNPACK operations
@@ -354,7 +351,7 @@ static ynn_status DefineBatchMatrixMultiply(ynn_subgraph_t subgraph,
   if (transpose_b) {
     uint32_t input2_id_transposed = YNN_INVALID_VALUE_ID;
     std::array<int32_t, YNN_MAX_TENSOR_RANK> perm;
-    std::iota(perm.begin(), perm.end(), 0);
+    absl::c_iota(perm, 0);
     CHECK_LT(b_rank, YNN_MAX_TENSOR_RANK);
     std::swap(perm[b_rank - 1], perm[b_rank - 2]);
     ynn_status status = ynn_define_static_transpose(
@@ -376,12 +373,12 @@ static absl::StatusOr<YnnSubgraph> EmitYnnDotSubgraph(
     std::vector<std::unique_ptr<Literal>>& literals,
     absl::Span<const se::DeviceMemoryBase> arguments_buffers,
     bool capture_rhs) {
-  TF_ASSIGN_OR_RETURN(YnnSubgraph subgraph,
-                      CreateYnnSubgraph([&](ynn_subgraph_t* subgraph) {
-                        return ynn_create_subgraph(
-                            /*external_value_ids=*/3,
-                            /*flags=*/0, subgraph);
-                      }));
+  TF_ASSIGN_OR_RETURN(
+      YnnSubgraph subgraph, CreateYnnSubgraph([&](ynn_subgraph_t* subgraph) {
+        return ynn_create_subgraph(
+            /*external_value_ids=*/3,
+            YnnFlags(dot->GetModule()->config().debug_options()), subgraph);
+      }));
 
   uint32_t lhs_id = 0;
   uint32_t rhs_id = 1;
@@ -433,7 +430,7 @@ static absl::StatusOr<YnnSubgraph> EmitYnnDotSubgraph(
   TF_ASSIGN_OR_RETURN(DotCanonicalDims dot_canonical_dims,
                       GetDotCanonicalDims(dot_dimensions, dot_shape));
 
-  const size_t b_rank = rhs_shape.dimensions_size();
+  const size_t b_rank = rhs_shape.dimensions().size();
   const bool transpose_b = !dot_canonical_dims.rhs_canonical;
   YNN_RETURN_IF_ERROR(DefineBatchMatrixMultiply(subgraph.get(), lhs_id, rhs_id,
                                                 out_id, b_rank, transpose_b));

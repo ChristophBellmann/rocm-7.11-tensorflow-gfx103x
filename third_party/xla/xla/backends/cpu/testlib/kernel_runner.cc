@@ -26,6 +26,7 @@ limitations under the License.
 #include "llvm/IR/DataLayout.h"
 #include "llvm/IR/Module.h"
 #include "llvm/Target/TargetOptions.h"
+#include "xla/backends/cpu/codegen/builtin_definition_generator.h"
 #include "xla/backends/cpu/codegen/cpu_features.h"
 #include "xla/backends/cpu/codegen/execution_engine.h"
 #include "xla/backends/cpu/codegen/fusion_compiler.h"
@@ -35,13 +36,14 @@ limitations under the License.
 #include "xla/backends/cpu/runtime/function_library.h"
 #include "xla/backends/cpu/runtime/kernel.h"
 #include "xla/backends/cpu/runtime/kernel_c_api.h"
+#include "xla/backends/cpu/target_machine_options.h"
 #include "xla/codegen/kernel_definition.h"
 #include "xla/codegen/kernel_spec.h"
 #include "xla/codegen/llvm_kernel_source.h"
 #include "xla/codegen/mlir_kernel_source.h"
 #include "xla/runtime/work_group.h"
+#include "xla/service/cpu/cpu_compiler.h"
 #include "xla/service/cpu/cpu_options.h"
-#include "xla/service/cpu/runtime_symbol_generator.h"
 #include "xla/service/hlo_module_config.h"
 #include "xla/service/llvm_ir/llvm_util.h"
 #include "xla/tsl/platform/errors.h"
@@ -103,7 +105,8 @@ absl::StatusOr<JitCompiler> KernelRunner::CreateJitCompiler(
   IrCompiler::Options ir_compiler_options{
       /*optimization_level=*/IrCompiler::GetCodeGenOptLevel(config),
       /*optimize_for_size=*/options::OptimizeForSizeRequested(config),
-      /*max_cpu_isa=*/CpuFeatureFromString(debug_options.xla_cpu_max_isa()),
+      /*target_machine_options=*/
+      TargetMachineOptions(debug_options),
       /*fast_math_flags=*/llvm_ir::GetCpuFastMathFlags(config),
       /*disable_expensive_passes=*/
       debug_options.xla_llvm_disable_expensive_passes(),
@@ -116,7 +119,7 @@ absl::StatusOr<JitCompiler> KernelRunner::CreateJitCompiler(
   // Needed to resolve symbols such as built in intrinsics (sin, cos etc).
   ExecutionEngine::DefinitionGenerator definition_generator =
       [](const llvm::DataLayout& data_layout) {
-        return std::make_unique<RuntimeSymbolGenerator>(data_layout);
+        return std::make_unique<BuiltinDefinitionGenerator>(data_layout);
       };
 
   JitCompiler::Options jit_compiler_options{

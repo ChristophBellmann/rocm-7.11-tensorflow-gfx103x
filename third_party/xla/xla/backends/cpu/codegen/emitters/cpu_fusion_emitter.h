@@ -42,7 +42,7 @@ namespace cpu {
 
 IndexingMap GetDefaultIndexingMap(absl::Span<const int64_t> thread_tile_sizes,
                                   absl::Span<const int64_t> shape,
-                                  SymbolicExprContext* symbolic_expr_context);
+                                  mlir::MLIRContext* mlir_context);
 
 absl::StatusOr<mlir::func::FuncOp> EmitEntryFunctionApi(
     mlir::ModuleOp fusion_module, const HloFusionInstruction& fusion,
@@ -64,24 +64,6 @@ absl::StatusOr<mlir::OwningOpRef<mlir::ModuleOp>> CreateNamedMlirModuleOp(
 // C-style name of the fusion created by combining the name of the parent
 // HloModule and the name of the fusion.
 absl::StatusOr<std::string> GetFusionName(const HloFusionInstruction& fusion);
-
-class CpuFusionEmitterBase {
- public:
-  virtual ~CpuFusionEmitterBase() = default;
-
-  virtual int64_t num_threads() const = 0;
-
-  virtual std::optional<IndexingMap> ComputeThreadIdToOutputIndexing(
-      int64_t root_index, SymbolicExprContext* ctx) const = 0;
-
-  virtual std::optional<IndexingMap> ComputeThreadIdToInputIndexing(
-      int64_t root_index, int64_t hero_operand_index,
-      SymbolicExprContext* ctx) const = 0;
-
-  virtual std::string BackendExtraOptions() { return {}; }
-
-  virtual absl::StatusOr<mlir::OwningOpRef<mlir::ModuleOp>> Emit() const = 0;
-};
 
 int64_t CeilDiv(int64_t a, int64_t b);
 

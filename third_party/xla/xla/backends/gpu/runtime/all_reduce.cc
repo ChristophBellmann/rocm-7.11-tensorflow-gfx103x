@@ -42,7 +42,10 @@ namespace xla::gpu {
 
 namespace {
 
-using ::stream_executor::gpu::AllReduceStrategy;
+using se::gpu::AllReduceStrategy;
+static constexpr int64_t kMaxOneShotAllReduceSizeBytes = 256 * 1024;  // 256 KB
+static constexpr int64_t kMaxTwoShotAllReduceSizeBytes =
+    2 * 1024 * 1024;  // 2 MB
 
 template <typename T, ReductionKind kReductionKindV>
 class TagRegistry {
@@ -159,6 +162,28 @@ bool IsElementReductionSupported(PrimitiveType element_type,
 
 }  // namespace
 
+AllReduceStrategy GetAllReduceStrategy(int64_t input_size_bytes,
+                                       bool is_multimem_enabled) {
+  if (input_size_bytes > kMaxOneShotAllReduceSizeBytes) {
+    return AllReduceStrategy::kTwoShot;
+  }
+  if (is_multimem_enabled) {
+    return AllReduceStrategy::kMultimem;
+  }
+  return AllReduceStrategy::kOneShot;
+}
+
+int64_t GetMaxSupportedAllReduceSizeBytes(AllReduceStrategy strategy) {
+  switch (strategy) {
+    case AllReduceStrategy::kOneShot:
+      return kMaxOneShotAllReduceSizeBytes;
+    case AllReduceStrategy::kTwoShot:
+      return kMaxTwoShotAllReduceSizeBytes;
+    case AllReduceStrategy::kMultimem:
+      return kMaxTwoShotAllReduceSizeBytes;
+  }
+}
+
 LaunchDimensions AllReduceLaunchDimensions(int64_t elements, int64_t num_ranks,
                                            AllReduceStrategy strategy) {
   int64_t threads_per_block;
@@ -217,7 +242,7 @@ absl::Status RunAllReduceKernel(
                      "of ranks, elements, element type and reduction kind: ",
                      num_ranks, ", ", num_elements, ", ",
                      primitive_util::LowercasePrimitiveTypeName(element_type),
-                     ", ", ReductionKindToString(reduction_kind)));
+                     ", ", reduction_kind));
   }
 
   const auto launch_kernel_impl = [&](auto tag) -> absl::Status {
