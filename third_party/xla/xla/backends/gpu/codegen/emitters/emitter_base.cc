@@ -20,7 +20,6 @@ limitations under the License.
 #include <optional>
 #include <string>
 #include <utility>
-#include <variant>
 #include <vector>
 
 #include "absl/container/flat_hash_map.h"
@@ -89,6 +88,7 @@ limitations under the License.
 #include "xla/codegen/emitters/ir/xla_ops.h"
 #include "xla/codegen/emitters/kernel_api_builder.h"
 #include "xla/codegen/emitters/kernel_arguments.h"
+#include "xla/codegen/emitters/transforms/lower_to_llvm_gpu.h"
 #include "xla/codegen/emitters/transforms/pass_pipelines.h"
 #include "xla/codegen/emitters/transforms/passes.h"
 #include "xla/hlo/analysis/indexing_analysis.h"
@@ -281,6 +281,7 @@ absl::StatusOr<FusionEmissionResult> EmitterBase::Emit(
             if (ir_emitter_context.emit_kernels()) {
               mlir_context.appendDialectRegistry(GetDialectRegistry());
               mlir_context.loadAllAvailableDialects();
+              RegisterSymbolicExprStorage(&mlir_context);
               TF_ASSIGN_OR_RETURN(
                   module,
                   CreateLLVMModule(
@@ -512,7 +513,7 @@ void AddLoweringPasses(mlir::OpPassManager& pm,
   pm.addPass(emitters::CreateExpandFloatOpsPass());
   pm.addPass(mlir::createLowerAffinePass());
   pm.addPass(mlir::createSCFToControlFlowPass());
-  pm.addPass(emitters::CreateLowerToLLVMPass(device));
+  pm.addPass(emitters::CreateLowerToLLVMGPUPass(device));
   pm.addPass(mlir::createReconcileUnrealizedCastsPass());
 }
 

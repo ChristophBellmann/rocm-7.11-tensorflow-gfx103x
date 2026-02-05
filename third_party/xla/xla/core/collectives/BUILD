@@ -60,7 +60,7 @@ cc_library(
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings:string_view",
         "@com_google_absl//absl/synchronization",
-        "@local_tsl//tsl/platform:logging",
+        "@tsl//tsl/platform:logging",
     ],
 )
 
@@ -73,9 +73,7 @@ cc_library(
         "//xla:future",
         "//xla:util",
         "//xla:xla_data_proto_cc",
-        "//xla/stream_executor:device_memory",
-        "//xla/stream_executor:platform",
-        "//xla/tsl/concurrency:async_value",
+        "//xla/stream_executor:device_address",
         "@com_google_absl//absl/container:inlined_vector",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
@@ -123,5 +121,14 @@ cc_library(
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/strings:string_view",
+    ],
+)
+
+cc_library(
+    name = "symmetric_memory",
+    hdrs = ["symmetric_memory.h"],
+    deps = [
+        "//xla/stream_executor:kernel_args",
+        "@com_google_absl//absl/strings:str_format",
     ],
 )

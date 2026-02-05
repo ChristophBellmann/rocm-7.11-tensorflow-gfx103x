@@ -22,6 +22,7 @@ xla_cc_binary(
     ],
     deps = [
         "//xla:debug_options_flags",
+        "//xla:xla_proto_cc",
         "//xla/service/gpu/llvm_gpu_backend:load_ir_module",
         "//xla/service/gpu/llvm_gpu_backend:nvptx_backend",
         "//xla/stream_executor:device_description",
@@ -32,7 +33,7 @@ xla_cc_binary(
         "@llvm-project//llvm:Core",
         "@llvm-project//llvm:NVPTXCodeGen",  # buildcleaner: keep
         "@llvm-project//llvm:ObjCARC",  # buildcleaner: keep
-        "@local_tsl//tsl/platform:platform_port",
+        "@tsl//tsl/platform:platform_port",
     ] + if_cuda_is_configured([
         "//xla/stream_executor/cuda:cuda_platform",
     ]),

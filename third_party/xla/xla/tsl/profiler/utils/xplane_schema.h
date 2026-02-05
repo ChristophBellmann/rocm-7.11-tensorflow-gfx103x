@@ -377,7 +377,13 @@ enum StatType {
   kTcOffloadStartId,
   kOffloadExecutionIndex,
   kMarkerPayloadString,
-  kLastStatType = kMarkerPayloadString,
+  kMetadataCudaVersion,
+  kMetadataLibtpuVersion,
+  kMetadataCudaRuntimeVersion,
+  kMetadataCudaDriverVersion,
+  kLastStatType = kMetadataCudaDriverVersion,
+  // kMetadataJaxVersion,
+  // kMetadataJaxlibVersion,
 };
 
 enum MegaScaleStatType : uint8_t {
@@ -416,7 +422,8 @@ enum TaskEnvStatType {
   kFirstTaskEnvStatType = 1,
   kEnvProfileStartTime = kFirstTaskEnvStatType,
   kEnvProfileStopTime,
-  kLastTaskEnvStatType = kEnvProfileStopTime,
+  kEnvProfileOptions,
+  kLastTaskEnvStatType = kEnvProfileOptions,
 };
 
 static constexpr uint32_t kLineIdOffset = 10000;

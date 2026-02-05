@@ -39,7 +39,7 @@ limitations under the License.
 #include "xla/service/gpu/launch_dimensions.h"
 #include "xla/service/gpu/stream_executor_util.h"
 #include "xla/shape.h"
-#include "xla/stream_executor/device_memory.h"
+#include "xla/stream_executor/device_address.h"
 #include "xla/stream_executor/gpu/tma_metadata.h"
 #include "xla/stream_executor/kernel.h"
 #include "xla/stream_executor/kernel_args.h"
@@ -207,7 +207,7 @@ absl::Status KernelThunk::ExecuteOnStream(const ExecuteParams& params) {
     kernel = it->second.get();
   }
 
-  absl::InlinedVector<se::KernelArgument, 4> kernel_args;
+  absl::InlinedVector<se::KernelArg, 4> kernel_args;
   {
     TraceMe trace(
         [] {
@@ -217,7 +217,7 @@ absl::Status KernelThunk::ExecuteOnStream(const ExecuteParams& params) {
     int device_ordinal = executor->device_ordinal();
     XLA_VLOG_DEVICE(3, device_ordinal) << "Launching " << kernel->name();
     for (const auto& [idx, arg] : llvm::enumerate(args_)) {
-      se::DeviceMemoryBase buf =
+      se::DeviceAddressBase buf =
           params.buffer_allocations->GetDeviceAddress(arg);
       XLA_VLOG_DEVICE(3, device_ordinal)
           << "Arg: alloc #" << arg.index() << ", offset: " << arg.offset()
@@ -245,7 +245,7 @@ absl::Status KernelThunk::ExecuteOnStream(const ExecuteParams& params) {
 
   return ExecuteKernelOnStream(
       *kernel,
-      absl::Span<se::KernelArgument>(kernel_args.data(), kernel_args.size()),
+      absl::Span<se::KernelArg>(kernel_args.data(), kernel_args.size()),
       launch_dimensions_, cluster_dim_, stream);
 }
 

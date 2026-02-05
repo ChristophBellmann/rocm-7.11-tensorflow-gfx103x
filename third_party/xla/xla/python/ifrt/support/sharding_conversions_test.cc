@@ -106,10 +106,11 @@ class ShardingConversionsTest : public testing::TestWithParam<int> {
                                 sharding_param, device_list, MemoryKind()));
     const xla::Shape xla_shape(PrimitiveType::F16, shape.dims());
 
-    TF_ASSERT_OK_AND_ASSIGN(const std::vector<IndexDomain> index_domains,
-                            sharding->IndexDomains(shape));
-    ASSERT_EQ(index_domains.size(),
-              hlo_sharding.tile_assignment().num_elements());
+    TF_ASSERT_OK_AND_ASSIGN(
+        const std::vector<IndexDomain> index_domains,
+        sharding->IndexDomains(
+            shape, xla::ifrt::SingleDeviceShardSemantics::kAllShards));
+    ASSERT_EQ(index_domains.size(), hlo_sharding.num_devices());
     const xla::Shape xla_tile_shape = hlo_sharding.TileShape(xla_shape);
     for (int i = 0; i < index_domains.size(); ++i) {
       SCOPED_TRACE(absl::StrCat("on device ", i));

@@ -13,7 +13,6 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include <algorithm>
 #include <cstdint>
 #include <functional>
 #include <memory>
@@ -21,21 +20,20 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
+#include "absl/algorithm/container.h"
 #include "absl/log/check.h"
 #include "absl/log/log.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "xla/error_spec.h"
-#include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_sharding.h"
 #include "xla/hlo/parser/hlo_parser.h"
 #include "xla/hlo/testlib/verified_hlo_module.h"
 #include "xla/literal.h"
 #include "xla/service/gpu/backend_configs.pb.h"
+#include "xla/service/gpu/tests/collective_ops_e2e_test_base.h"
 #include "xla/service/hlo_module_config.h"
-#include "xla/service/hlo_runner.h"
-#include "xla/tests/collective_ops_e2e_test_base.h"
 #include "xla/tests/literal_test_util.h"
 #include "xla/tests/test_utils.h"
 #include "xla/tsl/platform/statusor.h"
@@ -91,9 +89,8 @@ class CollectiveOpsTestE2EShardedUnsharded : public CollectiveOpsE2ETestBase {
     RE2::GlobalReplace(&hlo_text_ref, R"(, sharding=\{replicated\})", "");
 
     HloModuleConfig ref_config = GetModuleConfigForTest();
-    DebugOptions ref_opts = GetDebugOptionsForTest();
-    ref_opts.set_xla_gpu_enable_triton_gemm(false);
-    ref_config.set_debug_options(ref_opts);
+    ref_config.mutable_debug_options().set_xla_gpu_enable_triton_gemm(false);
+
     TF_ASSIGN_OR_RETURN(std::unique_ptr<VerifiedHloModule> ref_module,
                         ParseAndReturnVerifiedModule(hlo_text_ref, ref_config));
 
@@ -116,11 +113,9 @@ class CollectiveOpsTestE2EShardedUnsharded : public CollectiveOpsE2ETestBase {
   absl::StatusOr<ExecutionResult> ExecuteSharded(
       const std::string& hlo_text, int64_t num_partitions,
       bool enable_enzyme_comms_opt = false) {
-    HloModuleConfig config = GetModuleConfigForTest();
-    DebugOptions opts = GetDebugOptionsForTest();
-    opts.set_xla_gpu_enable_triton_gemm(false);
-    config.set_debug_options(opts);
-    config.set_num_partitions(num_partitions);
+    HloModuleConfig config = GetModuleConfigForTest(
+        /*replica_count=*/1, /*num_partitions=*/num_partitions);
+    config.mutable_debug_options().set_xla_gpu_enable_triton_gemm(false);
     if (enable_enzyme_comms_opt) {
       config.mutable_debug_options().set_xla_enable_enzyme_comms_opt(true);
     }
@@ -165,9 +160,8 @@ class CollectiveOpsTestE2EShardedUnsharded : public CollectiveOpsE2ETestBase {
             upper[param_sharded_dims[k][m]] =
                 param_dims_per_shard[k][param_sharded_dims[k][m]];
           }
-          std::transform(upper.begin(), upper.end(),
-                         param_dims_per_shard[k].begin(), lower.begin(),
-                         std::minus<int64_t>());
+          absl::c_transform(upper, param_dims_per_shard[k], lower.begin(),
+                            std::minus<int64_t>());
         }
       } else {
         fake_args_sliced[k].push_back(fake_args[k].Clone());
@@ -192,11 +186,10 @@ class CollectiveOpsTestE2EShardedUnsharded : public CollectiveOpsE2ETestBase {
                                const std::vector<Literal>& ref_results,
                                const std::vector<Literal>& results,
                                ErrorSpec& error_spec) {
-    HloModuleConfig config = GetModuleConfigForTest();
-    DebugOptions opts = GetDebugOptionsForTest();
-    opts.set_xla_gpu_enable_triton_gemm(false);
-    config.set_debug_options(opts);
-    config.set_num_partitions(num_partitions);
+    HloModuleConfig config = GetModuleConfigForTest(
+        /*replica_count=*/1, /*num_partitions=*/num_partitions);
+    config.mutable_debug_options().set_xla_gpu_enable_triton_gemm(false);
+
     TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
                             ParseAndReturnVerifiedModule(hlo_text, config));
     auto dimensions =
@@ -227,8 +220,8 @@ class CollectiveOpsTestE2EShardedUnsharded : public CollectiveOpsE2ETestBase {
           upper[root_sharded_dims[m]] =
               root_dims_per_shard[root_sharded_dims[m]];
         }
-        std::transform(upper.begin(), upper.end(), root_dims_per_shard.begin(),
-                       lower.begin(), std::minus<int64_t>());
+        absl::c_transform(upper, root_dims_per_shard, lower.begin(),
+                          std::minus<int64_t>());
       }
     } else {
       EXPECT_TRUE(
@@ -240,7 +233,7 @@ class CollectiveOpsTestE2EShardedUnsharded : public CollectiveOpsE2ETestBase {
                            std::vector<int64_t>& sharded_dims,
                            const HloSharding& sharding) {
     if (!sharding.IsReplicated()) {
-      for (int k = 0; k < sharding.tile_assignment().num_dimensions(); ++k) {
+      for (int k = 0; k < sharding.num_dimensions(); ++k) {
         if (sharding.dimension(k) > 1) {
           dims_per_shard[k] /= sharding.dimension(k);
           sharded_dims.push_back(k);

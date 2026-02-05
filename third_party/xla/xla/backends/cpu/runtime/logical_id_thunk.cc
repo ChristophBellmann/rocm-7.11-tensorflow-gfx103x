@@ -28,8 +28,9 @@ limitations under the License.
 #include "xla/runtime/device_id.h"
 #include "xla/service/buffer_assignment.h"
 #include "xla/service/computation_placer.h"
+#include "xla/shape_util.h"
 #include "xla/status_macros.h"
-#include "xla/stream_executor/device_memory.h"
+#include "xla/stream_executor/device_address.h"
 #include "xla/tsl/concurrency/async_value_ref.h"
 #include "xla/tsl/platform/statusor.h"
 
@@ -81,7 +82,7 @@ template <LogicalIdKind logical_id_kind>
 tsl::AsyncValueRef<typename LogicalIdThunk<logical_id_kind>::ExecuteEvent>
 LogicalIdThunk<logical_id_kind>::Execute(const ExecuteParams& params) {
   TF_ASSIGN_OR_RETURN(
-      se::DeviceMemoryBase logical_id_data,
+      se::DeviceAddressBase logical_id_data,
       params.buffer_allocations->GetDeviceAddress(logical_id_buffer_));
 
   TF_RET_CHECK(logical_id_data.size() == sizeof(int32_t))
@@ -107,7 +108,7 @@ LogicalIdThunk<logical_id_kind>::Execute(const ExecuteParams& params) {
 
 template <LogicalIdKind logical_id_kind>
 Thunk::BufferUses LogicalIdThunk<logical_id_kind>::buffer_uses() const {
-  return {BufferUse::Write(logical_id_buffer_)};
+  return {BufferUse::Write(logical_id_buffer_, ShapeUtil::MakeShape(S32, {}))};
 }
 
 template class LogicalIdThunk<LogicalIdKind::kReplicaId>;

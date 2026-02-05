@@ -19,6 +19,7 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
+#include "absl/algorithm/container.h"
 #include "absl/log/check.h"
 #include "absl/log/log.h"
 #include "absl/status/status.h"
@@ -36,11 +37,12 @@ limitations under the License.
 #include "xla/service/gpu/autotuning/autotuner_util.h"
 #include "xla/service/gpu/gpu_executable_run_options.h"
 #include "xla/service/gpu/ir_emission_utils.h"
-#include "xla/service/maybe_owning_device_memory.h"
+#include "xla/service/maybe_owning_device_address.h"
 #include "xla/service/service_executable_run_options.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
-#include "xla/stream_executor/device_memory.h"
+#include "xla/stream_executor/device_address.h"
+#include "xla/stream_executor/kernel_stats.h"
 #include "xla/stream_executor/stream.h"
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/statusor.h"
@@ -54,7 +56,7 @@ namespace gpu {
 namespace {
 
 std::vector<ExecutionInput> ExecutionInputsFromBuffers(
-    absl::Span<se::DeviceMemoryBase const> buffers,
+    absl::Span<se::DeviceAddressBase const> buffers,
     absl::Span<Shape const> shapes) {
   CHECK_EQ(buffers.size(), shapes.size());
   std::vector<ExecutionInput> inputs;
@@ -63,32 +65,29 @@ std::vector<ExecutionInput> ExecutionInputsFromBuffers(
     // Our executable doesn't have input-output aliasing, so we can pass
     // unowned input buffers.
     inputs.back().SetUnownedBuffer(
-        /*index=*/{}, MaybeOwningDeviceMemory(/*unowned=*/buffers.at(i)));
+        /*index=*/{}, MaybeOwningDeviceAddress(/*unowned=*/buffers.at(i)));
   }
   return inputs;
 }
 
 }  // namespace
 
-AutotunerCompileUtil::AutotunerCompileUtil(std::unique_ptr<Compiler> compiler,
-                                           se::StreamExecutor& stream_executor,
-                                           se::Stream& stream,
-                                           se::DeviceMemoryAllocator& allocator,
-                                           const DebugOptions& opts)
+AutotunerCompileUtil::AutotunerCompileUtil(
+    std::unique_ptr<Compiler> compiler, se::StreamExecutor& stream_executor,
+    se::Stream& stream, se::DeviceAddressAllocator& allocator,
+    const DebugOptions& opts)
     : compiler_(std::move(compiler)),
       stream_executor_(stream_executor),
       stream_(stream),
       allocator_(allocator),
       opts_(opts) {
-  GpuCodegenBackend::AdjustDebugOptionsForAutotuning(
-      opts_,
-      /*force_allow_register_spills=*/false);
+  GpuCodegenBackend::AdjustDebugOptionsForAutotuning(opts_);
 }
 
 absl::StatusOr<AutotunerCompileUtil::ProfilingOutput>
 AutotunerCompileUtil::ProfileExecutable(
     Executable* executable, se::Stream* stream,
-    absl::Span<se::DeviceMemoryBase const> input_buffers,
+    absl::Span<se::DeviceAddressBase const> input_buffers,
     absl::Span<Shape const> input_shapes) {
   tsl::profiler::TraceMe traceme("ProfileExecutable");
   {
@@ -139,6 +138,21 @@ absl::StatusOr<std::unique_ptr<Executable>> AutotunerCompileUtil::Compile(
             << " that is ignored";
     return std::unique_ptr<Executable>();
   }
+  if (!out.ok()) {
+    return out.status();
+  }
+  if (opts_.xla_gpu_filter_kernels_spilling_registers_on_autotuning()) {
+    const ModuleStats& module_stats = out.value()->module_stats();
+    const auto spills_registers = [](const auto& pair) {
+      const KernelStats& kernel_stats = pair.second;
+      return kernel_stats.store_bytes_spilled > 0 ||
+             kernel_stats.load_bytes_spilled > 0;
+    };
+
+    if (absl::c_any_of(module_stats, spills_registers)) {
+      return std::unique_ptr<Executable>();
+    }
+  }
   return out;
 }
 
@@ -155,10 +169,11 @@ absl::StatusOr<std::unique_ptr<HloModule>> AutotunerCompileUtil::ExtractModule(
         "Deviceless autotuning is not supported.");
   }
   se::StreamExecutor* stream_exec = config.GetExecutor();
-  se::DeviceMemoryAllocator* allocator = config.GetAllocator();
+  se::DeviceAddressAllocator* allocator = config.GetAllocator();
   TF_ASSIGN_OR_RETURN(se::Stream* const stream, config.GetStream());
-  TF_ASSIGN_OR_RETURN(std::unique_ptr<Compiler> compiler,
-                      Compiler::GetForPlatform(stream_exec->GetPlatform()));
+  TF_ASSIGN_OR_RETURN(
+      std::unique_ptr<Compiler> compiler,
+      Compiler::GetForPlatform(stream_exec->GetPlatform()->id()));
   return AutotunerCompileUtil(std::move(compiler), *stream_exec, *stream,
                               *allocator, opts);
 }

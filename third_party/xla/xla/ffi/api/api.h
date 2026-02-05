@@ -1663,13 +1663,10 @@ class Handler : public Ffi {
   using ResultType = std::invoke_result_t<Fn, FnArgType<Ts>...>;
 
  public:
-  // We deliberately opt-out from the cognitive complexity check, as this
-  // function is on a hot path, any any attempt to split it leads to measurable
-  // regressions in microbenchmarks. It is a straight line block of mostly
-  // constexpr conditionals, that gets optimized to a much smaller code size in
-  // all template instantiations.
-  //
-  // NOLINTNEXTLINE(readability-function-cognitive-complexity)
+  // Note: this function is on a hot path, any any attempt to split it leads to
+  // measurable regressions in microbenchmarks. It is a straight line block of
+  // mostly constexpr conditionals, that gets optimized to a much smaller code
+  // size in all template instantiations.
   XLA_FFI_Error* Call(XLA_FFI_CallFrame* call_frame) const override {
     // Sanity checking call frame struct size.
     if (XLA_FFI_Error* err = CheckStructSize(
@@ -2268,6 +2265,14 @@ auto DictionaryDecoder(Members... m) {
 
 // Following two APIs are intended for users who want to export XLA FFI handler
 // from a shared library as a C function symbol.
+
+// Declares C function that returns FFI type id.
+#define XLA_FFI_DECLARE_TYPE_ID_SYMBOL(type_id_fn) \
+  extern "C" XLA_FFI_TypeId* type_id_fn()
+
+// Declares C function that returns FFI type info.
+#define XLA_FFI_DECLARE_TYPE_INFO_SYMBOL(type_info_fn) \
+  extern "C" const XLA_FFI_TypeInfo* type_info_fn()
 
 // Declares C function that implements FFI handler.
 #define XLA_FFI_DECLARE_HANDLER_SYMBOL(fn) \

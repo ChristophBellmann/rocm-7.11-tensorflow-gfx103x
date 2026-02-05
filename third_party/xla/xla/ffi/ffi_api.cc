@@ -47,7 +47,8 @@ limitations under the License.
 #include "xla/ffi/ffi_structs.h"
 #include "xla/ffi/type_registry.h"
 #include "xla/service/platform_util.h"
-#include "xla/stream_executor/device_memory.h"
+#include "xla/stream_executor/device_address.h"
+#include "xla/stream_executor/device_address_allocator.h"
 #include "xla/tsl/concurrency/async_value_ref.h"
 #include "xla/tsl/concurrency/chain.h"
 #include "xla/tsl/platform/logging.h"
@@ -98,8 +99,13 @@ static XLA_FFI_ExecutionContext CreateExecutionContext(
 
     BackendContext operator()(const CallOptions::GpuOptions& options) const {
       return XLA_FFI_ExecutionContext::GpuContext{
-          options.stream, options.allocator, options.collective_params,
-          options.collective_clique_requests, options.collective_cliques};
+          options.stream,
+          options.allocator,
+          options.collective_params,
+          options.collective_clique_requests,
+          options.collective_memory_requests,
+          options.collective_cliques,
+          options.gpu_compute_capability};
     }
   };
 
@@ -760,7 +766,7 @@ static XLA_FFI_Error* XLA_FFI_DeviceMemory_Allocate(
         InvalidArgument("Unsupported alignment: %d", args->alignment)};
   }
 
-  absl::StatusOr<stream_executor::OwningDeviceMemory> memory =
+  absl::StatusOr<stream_executor::ScopedDeviceAddress<uint8_t>> memory =
       gpu->allocator->Allocate(args->ctx->device_ordinal, args->size);
   if (!memory.ok()) {
     return new XLA_FFI_Error{std::move(memory).status()};
@@ -794,7 +800,7 @@ static XLA_FFI_Error* XLA_FFI_DeviceMemory_Free(
 
   absl::Status status = gpu->allocator->Deallocate(
       args->ctx->device_ordinal,
-      stream_executor::DeviceMemoryBase(args->data, args->size));
+      stream_executor::DeviceAddressBase(args->data, args->size));
   if (!status.ok()) {
     return new XLA_FFI_Error{std::move(status)};
   }

@@ -695,9 +695,19 @@ CopyRemover::CopyRemover(
           if (a == b) {
             return false;
           }
-          const bool a_has_smaller_id =
-              instruction_ids.at(a->defining_instruction()->unique_id()) <
-              instruction_ids.at(b->defining_instruction()->unique_id());
+
+          // instrion_ids does not contain entries for instructions in dead
+          // computations.
+          int64_t a_id =
+              a->defining_instruction()->parent()->IsDeadComputation()
+                  ? 0
+                  : instruction_ids.at(a->defining_instruction()->unique_id());
+          int64_t b_id =
+              b->defining_instruction()->parent()->IsDeadComputation()
+                  ? 0
+                  : instruction_ids.at(b->defining_instruction()->unique_id());
+
+          const bool a_has_smaller_id = a_id < b_id;
           // Use a_has_smaller_id as a hint for the order between a and b. In
           // case it's right, there is no need for two IsDefinedBefore() tests.
           if (a_has_smaller_id) {
@@ -857,7 +867,13 @@ LiveRangeRegions CopyRemover::ComputeLiveRangeRegions(const ValueNode* head) {
 // and true is returned. Returns false otherwise.
 bool CopyRemover::TryElideCopy(
     const HloInstruction* copy, int64_t* region_analysis_limit,
-    bool insert_post_scheduling_control_dependencies) {
+    bool insert_post_scheduling_control_dependencies,
+    std::function<bool(const HloInstruction* copy)> should_skip_removal) {
+  if (should_skip_removal != nullptr && should_skip_removal(copy)) {
+    VLOG(2) << copy->name()
+            << " is skipped due to should_skip_removal function.";
+    return false;
+  }
   VLOG(3) << "TryElideCopy starting for: " << copy->name();
   CHECK_NE(region_analysis_limit, nullptr);
 

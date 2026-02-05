@@ -36,8 +36,6 @@ limitations under the License.
 #include "xla/hlo/analysis/symbolic_expr.h"
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
 #include "xla/hlo/testlib/verified_hlo_module.h"
-#include "tsl/platform/statusor.h"
-#include "tsl/platform/test.h"
 
 namespace xla {
 namespace {
@@ -48,6 +46,7 @@ using ::testing::ElementsAre;
 
 class IndexingMapTest : public HloHardwareIndependentTestBase {
  public:
+  IndexingMapTest() { RegisterSymbolicExprStorage(&mlir_context_); }
   IndexingMap Parse(absl::string_view indexing_map_str) {
     auto indexing_map = ParseIndexingMap(indexing_map_str, &mlir_context_);
     EXPECT_TRUE(indexing_map.has_value());
@@ -1457,8 +1456,8 @@ TEST_F(IndexingMapTest, RangeVarSupportsAbslHashAndEqAndNe) {
 }
 
 TEST_F(IndexingMapTest, RTVarSupportsAbslHashAndEqAndNe) {
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> hlo_module,
-                          ParseAndReturnVerifiedModule(R"(
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> hlo_module,
+                       ParseAndReturnVerifiedModule(R"(
                             HloModule m
                             ENTRY e {
                               ROOT %constant = s64[] constant(42)

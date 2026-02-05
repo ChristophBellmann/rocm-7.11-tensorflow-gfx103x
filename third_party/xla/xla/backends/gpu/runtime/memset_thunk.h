@@ -22,9 +22,11 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/types/span.h"
+#include "xla/backends/gpu/runtime/shaped_slice.h"
 #include "xla/backends/gpu/runtime/thunk.h"
 #include "xla/runtime/buffer_use.h"
 #include "xla/service/buffer_assignment.h"
+#include "xla/shape_util.h"
 
 // This file contains thunks that set a buffer's elements to a particular value.
 // This can be faster than emitting a kernel to set the elements.
@@ -35,17 +37,16 @@ namespace gpu {
 // Thunk that zeroes out a given chunk of memory.
 class MemzeroThunk : public Thunk {
  public:
-  explicit MemzeroThunk(ThunkInfo thunk_info,
-                        const BufferAllocation::Slice& dest)
+  explicit MemzeroThunk(ThunkInfo thunk_info, const ShapedSlice& dest)
       : Thunk(Kind::kMemzero, thunk_info), dest_(dest) {}
 
   absl::Status ExecuteOnStream(const ExecuteParams& params) override;
 
-  const BufferAllocation::Slice& destination() const { return dest_; }
+  const ShapedSlice& destination() const { return dest_; }
 
   BufferUses buffer_uses() const override {
     return {
-        BufferUse::Write(dest_),
+        BufferUse::Write(dest_.slice, dest_.shape),
     };
   }
 
@@ -56,7 +57,7 @@ class MemzeroThunk : public Thunk {
   absl::StatusOr<ThunkProto> ToProto() const override;
 
  private:
-  const BufferAllocation::Slice dest_;
+  const ShapedSlice dest_;
 };
 
 // Thunk that sets a given chunk of memory to a particular 32-bit value.  The
@@ -76,7 +77,7 @@ class Memset32BitValueThunk : public Thunk {
 
   BufferUses buffer_uses() const override {
     return {
-        BufferUse::Write(dest_),
+        BufferUse::Write(dest_, ShapeUtil::MakeShape(U32, {})),
     };
   }
 

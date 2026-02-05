@@ -215,9 +215,14 @@ def StableHLOLowerToTritonPass
   let dependentDialects = [
     "::mlir::stablehlo::StablehloDialect",
     "::mlir::triton::TritonDialect",
+    "::mlir::triton::xla::XlaTritonDialect",
     "::xla::xtile::XTileDialect",
   ];
-  let constructor = "CreateStableHLOLowerToTritonPass()";
+  let options = [
+    Option<"warp_specialization_allowed_", "warp_specialization_allowed",
+           "bool", "",
+           "Whether to allow warp specializations.">,
+  ];
 }
 
 def TensorLowerToTritonPass
@@ -262,6 +267,14 @@ def ArithFP8ConversionToTritonPass
     "Converts arith extf and truncf operations to their Triton equivalent.";
   let dependentDialects = [
     "::mlir::triton::TritonDialect",
+  ];
+}
+def UnsupportedElementwiseToTritonPass
+    : Pass<"unsupported-elementwise-to-triton"> {
+  let summary =
+    "Converts unsupported elementwise operations to their Triton equivalent.";
+  let dependentDialects = [
+    "::mlir::arith::ArithDialect",
   ];
 }
 

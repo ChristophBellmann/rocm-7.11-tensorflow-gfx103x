@@ -2177,7 +2177,7 @@ tf_xla_py_strict_test(
         "//tensorflow/python/platform:test",
         "//third_party/py/numpy",
         "@absl_py//absl/testing:parameterized",
-        "@local_xla//xla:xla_data_proto_py",
+        "@xla//xla:xla_data_proto_py",
     ],
 )
 
@@ -2815,8 +2815,8 @@ cc_library(
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/types:span",
-        "@local_xla//xla:xla_data_proto_cc",
-        "@local_xla//xla/tsl/platform:status",
+        "@xla//xla:xla_data_proto_cc",
+        "@xla//xla/tsl/platform:status",
     ],
 )
 
@@ -2903,13 +2903,12 @@ tf_cuda_cc_test(
         "//tensorflow/compiler/jit:xla_kernel_creator",
         "//tensorflow/compiler/tf2xla:xla_compiler",
         "//tensorflow/core:framework",
-        "//tensorflow/core:lib",
         "//tensorflow/core:protos_all_cc",
         "//tensorflow/core:test",
         "//tensorflow/core:test_main",
         "//tensorflow/core:testlib",
         "//tensorflow/core/kernels:ops_testutil",
-        "@local_xla//xla/tsl/platform:status",
+        "@com_google_absl//absl/log:check",
     ],
 )
 

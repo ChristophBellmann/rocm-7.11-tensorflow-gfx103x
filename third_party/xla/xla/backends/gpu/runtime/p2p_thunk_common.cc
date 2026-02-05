@@ -26,6 +26,7 @@ limitations under the License.
 #include "absl/strings/str_cat.h"
 #include "absl/synchronization/mutex.h"
 #include "mlir/IR/BuiltinAttributes.h"
+#include "xla/backends/gpu/runtime/collective_thunk.h"
 #include "xla/backends/gpu/runtime/thunk.h"
 #include "xla/executable_run_options.h"
 #include "xla/hlo/ir/collective_op_group_mode.h"
@@ -93,7 +94,7 @@ P2PConfig GetP2PConfigForSendRecv(const HloSendRecvInstruction* instr,
                                   const Shape& shape, int64_t replica_count,
                                   int64_t partition_count) {
   P2PConfig p2p_config;
-  auto& config = p2p_config.config;
+  CollectiveConfig& config = p2p_config.config;
 
   config.operand_element_type.push_back(shape.element_type());
   config.group_mode = GetCollectiveOpGroupMode(
@@ -127,30 +128,7 @@ P2PConfig GetP2PConfigForSendRecv(const HloSendRecvInstruction* instr,
   }
 
   std::vector<ReplicaGroup> replica_groups = statusor.value();
-  auto validation_it =
-      instr->frontend_attributes().map().find(kSendRecvValidationAttr);
-  P2PConfig::ValidationKind validation_kind = P2PConfig::ValidationKind::kValid;
-  std::vector<ReplicaGroup> bounds;
-  if (validation_it != instr->frontend_attributes().map().end()) {
-    if (validation_it->second == "invalid") {
-      validation_kind = P2PConfig::ValidationKind::kInvalid;
-    } else {
-      auto statusor_bounds = ParseReplicaGroupsOnly(validation_it->second);
-      if (!statusor_bounds.ok() ||
-          statusor_bounds.value().size() != replica_groups.size()) {
-        // Ignore problems related to the source-target-pair string to avoid
-        // using absl::StatusOr for the return type.
-        return p2p_config;
-      }
-      validation_kind = P2PConfig::ValidationKind::kConditional;
-      bounds = statusor_bounds.value();
-    }
-  }
-
-  int i = 0;
-  p2p_config.validation_kind = validation_kind;
-  P2PConfig::SourceTargetToBounds& source_target_to_bounds =
-      p2p_config.source_target_to_bounds;
+  p2p_config.validation_kind = P2PConfig::ValidationKind::kValid;
   for (const ReplicaGroup& replica_group : replica_groups) {
     int64_t source = replica_group.replica_ids(0);
     int64_t target = replica_group.replica_ids(1);
@@ -159,15 +137,6 @@ P2PConfig GetP2PConfigForSendRecv(const HloSendRecvInstruction* instr,
         source;
     p2p_config.id_to_source_target.insert({source, {}}).first->second.target =
         target;
-
-    if (validation_kind == P2PConfig::ValidationKind::kConditional) {
-      const ReplicaGroup& bound = bounds[i];
-      int64_t lower = bound.replica_ids(0);
-      int64_t upper = bound.replica_ids(1);
-      source_target_to_bounds[std::make_pair(source, target)] =
-          std::make_pair(lower, upper);
-      i++;
-    }
   }
 
   return p2p_config;

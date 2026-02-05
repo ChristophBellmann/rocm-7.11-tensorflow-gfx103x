@@ -12,6 +12,10 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
+
+// DEPRECATED: This file is deprecated and will be removed soon.
+// Please use autotuner.h instead.
+
 #ifndef XLA_SERVICE_GPU_AUTOTUNING_GEMM_FUSION_AUTOTUNER_H_
 #define XLA_SERVICE_GPU_AUTOTUNING_GEMM_FUSION_AUTOTUNER_H_
 
@@ -28,8 +32,10 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
+#include "mlir/IR/MLIRContext.h"
 #include "xla/autotuning.pb.h"
-#include "xla/hlo/analysis/symbolic_expr.h"
+#include "xla/backends/autotuner/codegen_backend.h"
+#include "xla/hlo/analysis/alias_info.h"
 #include "xla/hlo/ir/dfs_hlo_visitor_with_default.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
@@ -37,6 +43,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/pass/hlo_pass_interface.h"
 #include "xla/pjrt/distributed/key_value_store_interface.h"
+#include "xla/service/compiler.h"
 #include "xla/service/executable.h"
 #include "xla/service/gpu/autotuning/autotuner_compile_util.h"
 #include "xla/service/gpu/autotuning/autotuner_util.h"
@@ -45,6 +52,7 @@ limitations under the License.
 #include "xla/service/shaped_buffer.h"
 #include "xla/stream_executor/device_description.h"
 #include "xla/stream_executor/semantic_version.h"
+#include "xla/stream_executor/stream_executor.h"
 #include "xla/tsl/platform/threadpool.h"
 #include "xla/xla.pb.h"
 
@@ -79,11 +87,13 @@ class GemmFusionAutotuner : public HloModulePass {
                                const se::SemanticVersion& toolkit_version,
                                tsl::thread::ThreadPool* thread_pool,
                                const MultiProcessKeyValueStore& key_value_store,
+                               const AliasInfo* alias_info,
                                mlir::MLIRContext* mlir_context)
       : config_(config),
         toolkit_version_(toolkit_version),
         thread_pool_(thread_pool),
         key_value_store_(key_value_store),
+        alias_info_(alias_info),
         mlir_context_(mlir_context) {}
 
   absl::string_view name() const override { return "gemm-fusion-autotuner"; }
@@ -97,11 +107,18 @@ class GemmFusionAutotuner : public HloModulePass {
       HloModule* module,
       const absl::flat_hash_set<absl::string_view>& execution_threads);
 
+  absl::StatusOr<std::vector<std::unique_ptr<CodegenBackend>>>
+  GetPlatformCodegenBackends(se::StreamExecutor* stream_exec,
+                             Compiler* compiler,
+                             const Compiler::GpuTargetConfig* target_config,
+                             const DebugOptions* debug_options);
+
  private:
   AutotuneConfig config_;
   se::SemanticVersion toolkit_version_;
   tsl::thread::ThreadPool* thread_pool_;
   MultiProcessKeyValueStore key_value_store_;
+  const AliasInfo* alias_info_;
   mlir::MLIRContext* mlir_context_;
 };
 
@@ -111,11 +128,12 @@ class GemmFusionAutotunerImpl {
       AutotuneConfig& config,
       const stream_executor::SemanticVersion& toolkit_version,
       DebugOptions debug_options, tsl::thread::ThreadPool* thread_pool,
-      mlir::MLIRContext* mlir_context)
+      const AliasInfo* alias_info, mlir::MLIRContext* mlir_context)
       : config_(std::move(config)),
         toolkit_version_(toolkit_version),
         debug_options_(std::move(debug_options)),
         thread_pool_(thread_pool),
+        alias_info_(alias_info),
         mlir_context_(mlir_context) {}
 
   struct CuBlasConfig {
@@ -217,6 +235,7 @@ class GemmFusionAutotunerImpl {
   DebugOptions debug_options_;
   tsl::thread::ThreadPool* thread_pool_;
   std::vector<TritonGemmConfig> triton_configs_;
+  const AliasInfo* alias_info_;
   mlir::MLIRContext* mlir_context_;
 };
 

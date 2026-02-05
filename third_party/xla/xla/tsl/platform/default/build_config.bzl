@@ -6,6 +6,7 @@
 load("@com_github_grpc_grpc//bazel:cc_grpc_library.bzl", "cc_grpc_library")
 load("@com_github_grpc_grpc//bazel:python_rules.bzl", "py_grpc_library")
 load("@com_google_protobuf//bazel:cc_proto_library.bzl", "cc_proto_library")
+load("@com_google_protobuf//bazel:proto_library.bzl", "proto_library")
 load("@com_google_protobuf//bazel:py_proto_library.bzl", "py_proto_library")
 load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
 load("@rules_cc//cc:cc_test.bzl", _cc_test = "cc_test")
@@ -175,7 +176,8 @@ def tf_proto_library(
         create_service = False,  # @unused
         create_java_proto = False,  # @unused
         create_kotlin_proto = False,  # @unused
-        create_go_proto = False):  # @unused
+        create_go_proto = False,  # @unused
+        **kwargs):
     """A macro generating protobuf and/or gRPC stubs for C++ and Python.
 
     It is a backward-compatible (with old TF-custom protobuf and gGRPC rules) macro which wraps a
@@ -215,6 +217,7 @@ def tf_proto_library(
       create_java_proto: Obsolete.
       create_kotlin_proto: Obsolete.
       create_go_proto: Obsolete.
+      **kwargs: Other arguments to pass to the proto library.
     """
 
     native.filegroup(
@@ -228,19 +231,20 @@ def tf_proto_library(
         name_sans_proto = name[:-6]
     else:
         name_sans_proto = name
-    native.proto_library(
+    proto_library(
         name = name,
         srcs = srcs,
         deps = deps + protodeps + [
             proto_lib
             for proto_lib in well_known_proto_libs()
-            if proto_lib not in protodeps
+            if proto_lib not in (deps + protodeps)
         ],
         exports = exports,
         compatible_with = compatible_with,
         visibility = visibility,
         testonly = testonly,
         tags = tags,
+        **kwargs
     )
 
     cc_proto_name = name + "_cc"
@@ -552,13 +556,13 @@ def tf_windows_aware_platform_deps(name):
         ],
     })
 
-def tf_platform_deps(name, platform_dir = "@local_xla//xla/tsl/platform/"):
+def tf_platform_deps(name, platform_dir = "@xla//xla/tsl/platform/"):
     return [platform_dir + "default:" + name]
 
-def tf_stream_executor_deps(name, platform_dir = "@local_xla//xla/tsl/platform/"):
+def tf_stream_executor_deps(name, platform_dir = "@xla//xla/tsl/platform/"):
     return tf_platform_deps(name, platform_dir)
 
-def tf_platform_alias(name, platform_dir = "@local_xla//xla/tsl/platform/"):
+def tf_platform_alias(name, platform_dir = "@xla//xla/tsl/platform/"):
     return [platform_dir + "default:" + name]
 
 def tf_error_logging_deps():

@@ -27,7 +27,7 @@ cc_library(
     deps = [
         "@com_github_grpc_grpc//:grpc++",
         "@com_google_absl//absl/synchronization",
-        "@local_tsl//tsl/platform:refcount",
+        "@tsl//tsl/platform:refcount",
     ],
 )
 
@@ -42,11 +42,11 @@ cc_library(
         "@com_github_grpc_grpc//:grpc++_codegen_proto",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/strings:cord",
+        "@com_google_absl//absl/strings:str_format",
+        "@com_google_absl//absl/strings:string_view",
         "@com_google_protobuf//:protobuf",
-        "@local_tsl//tsl/platform:protobuf",
-        "@local_tsl//tsl/platform:stringpiece",
-        "@local_tsl//tsl/platform:stringprintf",
-        "@local_tsl//tsl/platform:tstring",
+        "@tsl//tsl/platform:protobuf",
+        "@tsl//tsl/platform:tstring",
     ],
 )
 
@@ -78,7 +78,7 @@ cc_library(
         "//xla/tsl/platform:logging",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/synchronization",
-        "@local_tsl//tsl/platform:thread_annotations",
+        "@tsl//tsl/platform:thread_annotations",
     ],
 )
 
@@ -86,6 +86,7 @@ cc_library(
     name = "grpc_channel",
     srcs = ["grpc_channel.cc"],
     hdrs = ["grpc_channel.h"],
+    tags = ["nofixdeps"],
     deps = [
         ":grpc_channel_common",
         ":grpc_util",
@@ -101,10 +102,10 @@ cc_library(
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/synchronization",
-        "@local_tsl//tsl/platform:numbers",
-        "@local_tsl//tsl/platform:str_util",
-        "@local_tsl//tsl/platform:strcat",
-        "@local_tsl//tsl/platform:thread_annotations",
+        "@tsl//tsl/platform:numbers",
+        "@tsl//tsl/platform:str_util",
+        "@tsl//tsl/platform:strcat",
+        "@tsl//tsl/platform:thread_annotations",
     ],
 )
 
@@ -117,12 +118,12 @@ tsl_cc_test(
     deps = [
         ":grpc_channel",
         "//xla/tsl/lib/core:status_test_util",
-        "//xla/tsl/platform:env_impl",
+        "//xla/tsl/platform:env_impl",  # buildcleaner: keep
         "//xla/tsl/platform:test",
         "//xla/tsl/protobuf:rpc_options_proto_cc_impl",
         "//xla/tsl/util:device_name_utils",
         "@com_google_googletest//:gtest_main",
-        "@local_tsl//tsl/platform:strcat",
+        "@tsl//tsl/platform:strcat",
     ],
 )
 
@@ -135,11 +136,11 @@ cc_library(
         "//xla/tsl/distributed_runtime:call_options",
         "//xla/tsl/platform:env",
         "//xla/tsl/platform:errors",
-        "//xla/tsl/platform:status",
         "//xla/tsl/util:env_var",
         "@com_github_grpc_grpc//:grpc++",
+        "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status",
-        "@local_tsl//tsl/platform:strcat",
+        "@tsl//tsl/platform:strcat",
     ],
 )
 

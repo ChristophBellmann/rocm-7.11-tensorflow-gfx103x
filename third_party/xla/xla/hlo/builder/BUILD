@@ -46,7 +46,7 @@ xla_cc_test(
     deps = [
         ":padding",
         "@com_google_googletest//:gtest_main",
-        "@local_tsl//tsl/platform:test",
+        "@tsl//tsl/platform:test",
     ],
 )
 
@@ -149,7 +149,6 @@ cc_library(
         "//xla:comparison_util",
         "//xla:literal",
         "//xla:literal_util",
-        "//xla:permutation_util",
         "//xla:shape_util",
         "//xla:sharding_op_util",
         "//xla:status_macros",
@@ -162,6 +161,7 @@ cc_library(
         "//xla/service:shape_inference",
         "//xla/tsl/lib/core:bitmap",
         "//xla/tsl/platform:errors",
+        "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/base:nullability",
         "@com_google_absl//absl/container:flat_hash_map",
@@ -174,9 +174,8 @@ cc_library(
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/types:span",
-        "@local_tsl//tsl/platform:errors",
-        "@local_tsl//tsl/platform:stacktrace",
-        "@local_tsl//tsl/platform:statusor",
+        "@tsl//tsl/platform:errors",
+        "@tsl//tsl/platform:stacktrace",
     ],
 )
 
