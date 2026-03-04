@@ -642,7 +642,7 @@ def _create_local_rocm_repository(repository_ctx):
 
     clang_offload_bundler_path = rocm_config.llvm_path + "/bin/clang-offload-bundler"
 
-    have_hipblaslt = "1" if rocm_libs["hipblaslt"] != None else "0"
+    have_hipblaslt = "0"
 
     # Set up BUILD file for rocm/
     repository_ctx.template(
@@ -658,7 +658,7 @@ def _create_local_rocm_repository(repository_ctx):
             ),
             "%{rocm_gpu_architectures}": str(rocm_config.amdgpu_targets),
             "%{rocm_version_number}": str(rocm_version_number),
-            "%{rocm_hipblaslt}": "True" if rocm_libs["hipblaslt"] != None else "False",
+            "%{rocm_hipblaslt}": "False",
         },
     )
 

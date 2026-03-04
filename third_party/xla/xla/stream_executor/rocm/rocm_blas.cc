@@ -23,6 +23,7 @@ limitations under the License.
 #include <complex>
 #include <cstddef>
 #include <cstdint>
+#include <cstdlib>
 #include <memory>
 #include <string>
 #include <utility>
@@ -132,7 +133,14 @@ bool ROCMBlas::Init() {
   }
 
 #if TF_HIPBLASLT
-  if (!blas_lt_.Init().ok()) {
+  const char* disable_hipblaslt = std::getenv("TF_ROCM_DISABLE_HIPBLASLT_INIT");
+  const bool skip_hipblaslt = disable_hipblaslt != nullptr &&
+                              disable_hipblaslt[0] != '\0' &&
+                              disable_hipblaslt[0] != '0';
+  if (skip_hipblaslt) {
+    LOG(WARNING) << "Skipping hipBLASLt initialization due to TF_ROCM_DISABLE_HIPBLASLT_INIT="
+                 << disable_hipblaslt;
+  } else if (!blas_lt_.Init().ok()) {
     LOG(ERROR) << "Failed to initialize hipblasLt";
     return false;
   }
