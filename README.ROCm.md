@@ -12,9 +12,9 @@ For details on installation and usage, see these links:
 * [Basic installation](rocm_docs/tensorflow-install-basic.md)
 * [Building from source](rocm_docs/tensorflow-build-from-source.md)
 * [Quickstart guide](rocm_docs/tensorflow-quickstart.md)
+* [gfx1031 custom wheel build](tools/gfx1031/README.md)
 
 
 ## Technical details ##
 * [Overview of ROCm port](rocm_docs/rocm-port-overview.md)
 * [List of supported operators on ROCm](rocm_docs/core_kernels.md)
-
