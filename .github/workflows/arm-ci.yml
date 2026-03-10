@@ -16,10 +16,8 @@
 name: ARM CI
 
 on:
-  push:
-    branches:
-      - master
-      - r2.**
+  workflow_dispatch:
+
 permissions:
   contents: read
 

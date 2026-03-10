@@ -16,11 +16,7 @@
 name: ARM CI Extended C++
 
 on:
-  push:
-    tags:
-      - v2.**
-  schedule:
-    - cron: '0 2 * * *'
+  workflow_dispatch:
 
 permissions:
   contents: read

@@ -16,8 +16,7 @@
 name: OSV-Scanner Scheduled Scan
 
 on:
-  schedule:
-    - cron: 0 4 * * 1
+  workflow_dispatch:
 
 permissions:
   # Require writing security events to upload SARIF file to security tab

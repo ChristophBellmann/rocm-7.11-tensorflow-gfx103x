@@ -15,9 +15,7 @@
 
 name: PyLint
 on:
-  pull_request:
-    paths:
-      - '**.py'
+  workflow_dispatch:
 
 permissions:
   contents: read

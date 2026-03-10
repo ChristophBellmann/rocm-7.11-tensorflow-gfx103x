@@ -12,6 +12,10 @@
 [![OSSRank](https://shields.io/endpoint?url=https://ossrank.com/shield/44)](https://ossrank.com/p/44)
 [![Contributor Covenant](https://img.shields.io/badge/Contributor%20Covenant-v1.4%20adopted-ff69b4.svg)](CODE_OF_CONDUCT.md)
 
+Note for this fork: GitHub Actions workflows are intentionally manual-only
+(`workflow_dispatch`). This avoids automatic CI noise on the personal
+gfx1031/ROCm branch.
+
 **`Documentation`** |
 ------------------- |
 [![Documentation](https://img.shields.io/badge/api-reference-blue.svg)](https://www.tensorflow.org/api_docs/) |

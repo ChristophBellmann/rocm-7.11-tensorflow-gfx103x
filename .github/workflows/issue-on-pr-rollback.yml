@@ -15,10 +15,8 @@
 
 name: Creates a GitHub Issue when a PR Rolled back via Commit to Master
 on:
-  push:
-    branches:
-      - master
-      
+  workflow_dispatch:
+
 permissions: {}
 
 jobs:
