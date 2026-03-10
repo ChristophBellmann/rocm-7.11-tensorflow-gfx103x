@@ -20,6 +20,7 @@ tensorflow/contrib/cmake/_build/
 /build/
 [Bb]uild/
 /build_output/
+/.rocm_release/
 /tensorflow/core/util/version_info.cc
 /tensorflow/python/framework/fast_tensor_util.cpp
 /tensorflow/lite/gen/**

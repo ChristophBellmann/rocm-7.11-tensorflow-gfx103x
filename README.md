@@ -34,6 +34,26 @@ and [C++](https://www.tensorflow.org/api_docs/cc) APIs, as well as a
 non-guaranteed backward compatible API for
 [other languages](https://www.tensorflow.org/api_docs).
 
+## gfx103x ROCm release flow
+
+This fork carries the packaging source of truth for the custom gfx103x ROCm
+wheel workflow used by TheRock validation.
+
+Entry points:
+
+- `tools/rocm_release/build_tensorflow_rocm_wheel.sh`
+- `tools/rocm_release/install_tensorflow_rocm_wheel_to_opt.sh`
+
+Expected workflow:
+
+1. build repo-local against a chosen ROCm tree
+2. validate against the locally built wheel
+3. promote to `/opt/rocm/wheels/tensorflow_rocm_custom/`
+4. validate again against the promoted system wheel
+
+TheRock validation consumes these artifacts, but wheel packaging ownership lives
+in this fork.
+
 Keep up-to-date with release announcements and security updates by subscribing
 to
 [announce@tensorflow.org](https://groups.google.com/a/tensorflow.org/forum/#!forum/announce).
