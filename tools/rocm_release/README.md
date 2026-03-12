@@ -19,8 +19,17 @@ tools/rocm_release/build_tensorflow_rocm_wheel.sh
 
 Default repo-local outputs:
 
-- build workspace: `./.rocm_release/build/tensorflow_rocm`
+- build workspace: `./.rocm_release/builds/tensorflow_rocm`
 - wheel cache: `./.rocm_release/wheels/tensorflow_rocm_custom`
+
+Canonical override:
+
+- `RELEASE_ROOT=/path/to/release-state`
+
+Compatibility note:
+
+- existing legacy state under `./.rocm_release/build/tensorflow_rocm` is still accepted
+  if present, but new runs should use `./.rocm_release/builds/tensorflow_rocm`.
 
 ## Promote to /opt/rocm
 

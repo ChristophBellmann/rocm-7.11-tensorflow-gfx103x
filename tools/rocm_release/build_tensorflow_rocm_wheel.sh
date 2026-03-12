@@ -3,7 +3,15 @@ set -euo pipefail
 
 ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
 RELEASE_ROOT="${RELEASE_ROOT:-${ROOT}/.rocm_release}"
-WORK_ROOT="${WORK_ROOT:-${RELEASE_ROOT}/build/tensorflow_rocm}"
+DEFAULT_WORK_ROOT="${RELEASE_ROOT}/builds/tensorflow_rocm"
+LEGACY_WORK_ROOT="${RELEASE_ROOT}/build/tensorflow_rocm"
+if [[ -z "${WORK_ROOT:-}" ]]; then
+  if [[ -d "${DEFAULT_WORK_ROOT}" ]] || [[ ! -d "${LEGACY_WORK_ROOT}" ]]; then
+    WORK_ROOT="${DEFAULT_WORK_ROOT}"
+  else
+    WORK_ROOT="${LEGACY_WORK_ROOT}"
+  fi
+fi
 WHEEL_OUT_DIR="${WHEEL_OUT_DIR:-${RELEASE_ROOT}/wheels/tensorflow_rocm_custom}"
 BUILD_LOG="${BUILD_LOG:-${RELEASE_ROOT}/logs/tensorflow_rocm_build.log}"
 
