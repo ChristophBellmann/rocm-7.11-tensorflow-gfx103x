@@ -15,6 +15,14 @@ fi
 WHEEL_OUT_DIR="${WHEEL_OUT_DIR:-${RELEASE_ROOT}/wheels/tensorflow_rocm_custom}"
 BUILD_LOG="${BUILD_LOG:-${RELEASE_ROOT}/logs/tensorflow_rocm_build.log}"
 
+# TensorFlow has its own dependency/ABI policy. Keep it explicit and separate
+# from the PyTorch/ONNX Runtime NumPy-2 policy until this TensorFlow wheel is
+# rebuilt and validated under a different contract.
+export TF_BUILD_NUMPY_SPEC="${TF_BUILD_NUMPY_SPEC:-numpy<2}"
+export TF_BUILD_PROTOBUF_SPEC="${TF_BUILD_PROTOBUF_SPEC:-protobuf<7}"
+export TF_RUNTIME_NUMPY_SPEC="${TF_RUNTIME_NUMPY_SPEC:-${TF_BUILD_NUMPY_SPEC}}"
+export TF_RUNTIME_PROTOBUF_SPEC="${TF_RUNTIME_PROTOBUF_SPEC:-${TF_BUILD_PROTOBUF_SPEC}}"
+
 mkdir -p "${RELEASE_ROOT}/logs" "${WHEEL_OUT_DIR}"
 
 export RELEASE_ROOT
