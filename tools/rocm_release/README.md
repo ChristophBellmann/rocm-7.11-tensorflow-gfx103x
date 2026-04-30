@@ -3,6 +3,25 @@
 This directory is the packaging entrypoint for the custom gfx103x TensorFlow
 ROCm wheel flow.
 
+## Shared ROCm 7.11 framework policy
+
+Framework packaging ownership is split by fork:
+
+- PyTorch wheel family and deterministic project venvs:
+  `rocm-7.11-pytorch-gfx103x/tools/rocm_release/`
+- ONNX Runtime wheel family:
+  `rocm-7.11-onnxruntime-gfx103x/tools/rocm_release/`
+- TensorFlow wheel family:
+  this directory
+- TheRock/base repo:
+  ROCm stack build plus integration/validation only
+
+TensorFlow keeps its own isolated runtime dependency policy. Do not apply the
+PyTorch project-venv helper or PyTorch NumPy policy to TensorFlow. TensorFlow
+runtime validation may intentionally keep TensorFlow-specific pins such as
+`numpy<2` and `protobuf<7` until the TensorFlow wheel itself is rebuilt and
+validated with a different ABI/dependency contract.
+
 ## Build repo-local
 
 ```bash
