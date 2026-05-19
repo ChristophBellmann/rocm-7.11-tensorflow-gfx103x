@@ -209,6 +209,81 @@ purge_bazel_local_config_rocm() {
   rm -rf "${ROOT}/bazel-tensorflow/external/local_config_git" 2>/dev/null || true
 }
 
+create_rccl_stub() {
+  # RCCL (ROCm Collectives) is not built in this stack (single-GPU gfx1031).
+  # TF configure and build need both librccl.so and rccl.h. Create minimal
+  # stubs so the build doesn't fail.
+  local rccl_inc="${ROCM_PATH}/include/rccl"
+  mkdir -p "${rccl_inc}"
+  cat > "${rccl_inc}/rccl.h" <<'RCCL_H'
+#ifndef RCCL_H_
+#define RCCL_H_
+#include <stddef.h>
+#ifdef __cplusplus
+extern "C" {
+#endif
+typedef struct ncclComm* ncclComm_t;
+typedef int ncclResult_t;
+typedef int ncclUniqueId;
+enum { ncclSuccess = 0, ncclInProgress = 2, ncclInvalidArgument = 1 };
+const char* ncclGetErrorString(ncclResult_t code);
+const char* ncclGetLastError(ncclComm_t comm);
+ncclResult_t ncclGetVersion(int* ver);
+ncclResult_t ncclCommGetAsyncError(ncclComm_t comm, ncclResult_t* async_err);
+ncclResult_t ncclCommCount(const ncclComm_t comm, int* count);
+ncclResult_t ncclCommCuDevice(const ncclComm_t comm, int* device);
+ncclResult_t ncclCommUserRank(const ncclComm_t comm, int* rank);
+ncclResult_t ncclCommDestroy(ncclComm_t comm);
+ncclResult_t ncclCommAbort(ncclComm_t comm);
+ncclResult_t ncclCommSplit(ncclComm_t comm, int color, int key, ncclComm_t* newcomm, void* config);
+ncclResult_t ncclCommInitRank(ncclComm_t* newcomm, int ndev, ncclUniqueId commId, int rank);
+#ifdef __cplusplus
+}
+#endif
+#endif
+RCCL_H
+  # Build a tiny stub library so find_library succeeds at configure time.
+  "${REAL_CLANG}" -shared -fPIC -o /tmp/librccl_stub.so \
+    -Wl,-soname,librccl.so.1 -x c - <<'STUB_C'
+const char* ncclGetErrorString(int code) { return "stub"; }
+const char* ncclGetLastError(void* comm) { return "stub"; }
+int ncclGetVersion(int* ver) { *ver = 27000; return 0; }
+int ncclCommGetAsyncError(void* comm, int* async_err) { *async_err = 0; return 0; }
+int ncclCommCount(void* comm, int* count) { *count = 1; return 0; }
+int ncclCommCuDevice(void* comm, int* device) { *device = 0; return 0; }
+int ncclCommUserRank(void* comm, int* rank) { *rank = 0; return 0; }
+int ncclCommDestroy(void* comm) { return 0; }
+int ncclCommAbort(void* comm) { return 0; }
+int ncclCommSplit(void* comm, int color, int key, void** newcomm, void* config) { *newcomm = 0; return 0; }
+int ncclCommInitRank(void** newcomm, int ndev, int commId, int rank) { *newcomm = 0; return 0; }
+STUB_C
+  cp /tmp/librccl_stub.so "${ROCM_PATH}/lib/librccl.so.1"
+  ln -sf librccl.so.1 "${ROCM_PATH}/lib/librccl.so"
+
+  # After rccl stub is in place, run a dummy bazel build --nobuild to trigger
+  # the configure step (repository rules), then empty the nccl source files
+  # so the real build skips them.
+  bazelisk --output_user_root="${BAZEL_OUTPUT_USER_ROOT}" build \
+    --nobuild --config=opt --config=rocm --config=nonccl \
+    //tensorflow/tools/pip_package:wheel 2>&1 | tail -5 || true
+
+  "${PYTHON_BIN}" - "${BAZEL_OUTPUT_USER_ROOT}" <<'PY'
+import pathlib, sys
+root = pathlib.Path(sys.argv[1])
+n = 0
+for pat in ('*external/local_xla/xla/backends/gpu/collectives/nccl*',
+            '*execroot/org_tensorflow/external/local_xla/xla/backends/gpu/collectives/nccl*',
+            '*external/local_xla/xla/service/gpu/nccl*',
+            '*execroot/org_tensorflow/external/local_xla/xla/service/gpu/nccl*'):
+    for p in root.glob(pat):
+        if p.is_file() and p.suffix in ('.cc', '.h', '.cpp'):
+            p.write_text('// emptied\n')
+            n += 1
+            if n <= 5: print(f"  emptied: {p}")
+print(f"  emptied {n} nccl files")
+PY
+}
+
 force_disable_generated_rocm_hipblaslt() {
   "${PYTHON_BIN}" - "${BAZEL_OUTPUT_USER_ROOT}" "${ROOT}" <<'PY'
 import pathlib
@@ -340,11 +415,13 @@ fi
 
 rewrite_tf_configure_bazelrc_rocm_env
 patch_rocm_crosstool_builtin_includes
+create_rccl_stub
 force_disable_generated_rocm_hipblaslt
 
 bazelisk --output_user_root="${BAZEL_OUTPUT_USER_ROOT}" build \
   --config=opt \
   --config=rocm \
+  --config=nonccl \
   $( [[ "${BAZEL_VERBOSE_FAILURES}" == "1" ]] && echo "--verbose_failures" ) \
   --jobs="${JOBS}" \
   --repo_env=TF_ROCM_CLANG=1 \
