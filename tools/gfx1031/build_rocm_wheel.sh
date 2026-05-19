@@ -209,81 +209,6 @@ purge_bazel_local_config_rocm() {
   rm -rf "${ROOT}/bazel-tensorflow/external/local_config_git" 2>/dev/null || true
 }
 
-create_rccl_stub() {
-  # RCCL (ROCm Collectives) is not built in this stack (single-GPU gfx1031).
-  # TF configure and build need both librccl.so and rccl.h. Create minimal
-  # stubs so the build doesn't fail.
-  local rccl_inc="${ROCM_PATH}/include/rccl"
-  mkdir -p "${rccl_inc}"
-  cat > "${rccl_inc}/rccl.h" <<'RCCL_H'
-#ifndef RCCL_H_
-#define RCCL_H_
-#include <stddef.h>
-#ifdef __cplusplus
-extern "C" {
-#endif
-typedef struct ncclComm* ncclComm_t;
-typedef int ncclResult_t;
-typedef int ncclUniqueId;
-enum { ncclSuccess = 0, ncclInProgress = 2, ncclInvalidArgument = 1 };
-const char* ncclGetErrorString(ncclResult_t code);
-const char* ncclGetLastError(ncclComm_t comm);
-ncclResult_t ncclGetVersion(int* ver);
-ncclResult_t ncclCommGetAsyncError(ncclComm_t comm, ncclResult_t* async_err);
-ncclResult_t ncclCommCount(const ncclComm_t comm, int* count);
-ncclResult_t ncclCommCuDevice(const ncclComm_t comm, int* device);
-ncclResult_t ncclCommUserRank(const ncclComm_t comm, int* rank);
-ncclResult_t ncclCommDestroy(ncclComm_t comm);
-ncclResult_t ncclCommAbort(ncclComm_t comm);
-ncclResult_t ncclCommSplit(ncclComm_t comm, int color, int key, ncclComm_t* newcomm, void* config);
-ncclResult_t ncclCommInitRank(ncclComm_t* newcomm, int ndev, ncclUniqueId commId, int rank);
-#ifdef __cplusplus
-}
-#endif
-#endif
-RCCL_H
-  # Build a tiny stub library so find_library succeeds at configure time.
-  "${REAL_CLANG}" -shared -fPIC -o /tmp/librccl_stub.so \
-    -Wl,-soname,librccl.so.1 -x c - <<'STUB_C'
-const char* ncclGetErrorString(int code) { return "stub"; }
-const char* ncclGetLastError(void* comm) { return "stub"; }
-int ncclGetVersion(int* ver) { *ver = 27000; return 0; }
-int ncclCommGetAsyncError(void* comm, int* async_err) { *async_err = 0; return 0; }
-int ncclCommCount(void* comm, int* count) { *count = 1; return 0; }
-int ncclCommCuDevice(void* comm, int* device) { *device = 0; return 0; }
-int ncclCommUserRank(void* comm, int* rank) { *rank = 0; return 0; }
-int ncclCommDestroy(void* comm) { return 0; }
-int ncclCommAbort(void* comm) { return 0; }
-int ncclCommSplit(void* comm, int color, int key, void** newcomm, void* config) { *newcomm = 0; return 0; }
-int ncclCommInitRank(void** newcomm, int ndev, int commId, int rank) { *newcomm = 0; return 0; }
-STUB_C
-  cp /tmp/librccl_stub.so "${ROCM_PATH}/lib/librccl.so.1"
-  ln -sf librccl.so.1 "${ROCM_PATH}/lib/librccl.so"
-
-  # After rccl stub is in place, run a dummy bazel build --nobuild to trigger
-  # the configure step (repository rules), then empty the nccl source files
-  # so the real build skips them.
-  bazelisk --output_user_root="${BAZEL_OUTPUT_USER_ROOT}" build \
-    --nobuild --config=opt --config=rocm --config=nonccl \
-    //tensorflow/tools/pip_package:wheel 2>&1 | tail -5 || true
-
-  "${PYTHON_BIN}" - "${BAZEL_OUTPUT_USER_ROOT}" <<'PY'
-import pathlib, sys
-root = pathlib.Path(sys.argv[1])
-n = 0
-for pat in ('*external/local_xla/xla/backends/gpu/collectives/nccl*',
-            '*execroot/org_tensorflow/external/local_xla/xla/backends/gpu/collectives/nccl*',
-            '*external/local_xla/xla/service/gpu/nccl*',
-            '*execroot/org_tensorflow/external/local_xla/xla/service/gpu/nccl*'):
-    for p in root.glob(pat):
-        if p.is_file() and p.suffix in ('.cc', '.h', '.cpp'):
-            p.write_text('// emptied\n')
-            n += 1
-            if n <= 5: print(f"  emptied: {p}")
-print(f"  emptied {n} nccl files")
-PY
-}
-
 force_disable_generated_rocm_hipblaslt() {
   "${PYTHON_BIN}" - "${BAZEL_OUTPUT_USER_ROOT}" "${ROOT}" <<'PY'
 import pathlib
@@ -415,13 +340,86 @@ fi
 
 rewrite_tf_configure_bazelrc_rocm_env
 patch_rocm_crosstool_builtin_includes
-create_rccl_stub
 force_disable_generated_rocm_hipblaslt
+
+# Create comprehensive rccl.h stub.  TF/xla compile nccl code unconditionally
+# which needs rccl types and function declarations.  Provide them all as
+# noop stubs so compilation succeeds with no real RCCL.
+mkdir -p "${ROCM_PATH}/include/rccl"
+cat > "${ROCM_PATH}/include/rccl/rccl.h" <<'RCCL_H'
+#ifdef __cplusplus
+extern "C" {
+#endif
+typedef struct ncclComm* ncclComm_t;
+typedef int ncclResult_t;
+typedef char ncclUniqueId[128];
+typedef enum { ncclSum = 0, ncclProd = 1, ncclMin = 2, ncclMax = 3 } ncclRedOp_t;
+typedef enum { ncclFloat16=6, ncclHalf=6, ncclFloat32=7, ncclFloat=7, ncclFloat64=8, ncclDouble=8, ncclBfloat16=9, ncclInt8=0, ncclInt32=2, ncclInt=2, ncclUint8=1, ncclUint32=3, ncclInt64=4, ncclUint64=5 } ncclDataType_t;
+enum { ncclSuccess=0, ncclInProgress=2, ncclInvalidArgument=1, NCCL_UNIQUE_ID_BYTES=128 };
+const char* ncclGetErrorString(int code);
+const char* ncclGetLastError(void* comm);
+int ncclGetVersion(int* ver);
+int ncclGetUniqueId(void* id);
+int ncclCommInitRank(void** comm, int nranks, void* commId, int rank);
+int ncclCommInitAll(void** comms, int ndev, const int* devlist);
+int ncclCommDestroy(void* comm);
+int ncclCommAbort(void* comm);
+int ncclCommSplit(void* comm, int color, int key, void** newcomm, void* config);
+int ncclCommCount(void* comm, int* count);
+int ncclCommCuDevice(void* comm, int* device);
+int ncclCommUserRank(void* comm, int* rank);
+int ncclCommGetAsyncError(void* comm, int* async_err);
+int ncclCommFinalize(void* comm);
+int ncclGroupStart();
+int ncclGroupEnd();
+int ncclAllReduce(const void* sb, void* rb, unsigned long cnt, int dt, int op, void* comm, void* s);
+int ncclReduce(const void* sb, void* rb, unsigned long cnt, int dt, int op, int root, void* comm, void* s);
+int ncclBcast(void* b, unsigned long cnt, int dt, int root, void* comm, void* s);
+int ncclBroadcast(const void* sb, void* rb, unsigned long cnt, int dt, int root, void* comm, void* s);
+int ncclAllGather(const void* sb, void* rb, unsigned long cnt, int dt, void* comm, void* s);
+int ncclReduceScatter(const void* sb, void* rb, unsigned long cnt, int dt, int op, void* comm, void* s);
+int ncclAllToAll(const void* sb, void* rb, unsigned long cnt, int dt, void* comm, void* s);
+int ncclSend(const void* sb, unsigned long cnt, int dt, int peer, void* comm, void* s);
+int ncclRecv(void* rb, unsigned long cnt, int dt, int peer, void* comm, void* s);
+#ifdef __cplusplus
+}
+#endif
+RCCL_H
+# Build a matching stub library so find_library succeeds.
+"${REAL_CLANG}" -shared -fPIC -o /tmp/librccl_stub.so \
+  -Wl,-soname,librccl.so.1 -x c - <<'STUB_C'
+const char* ncclGetErrorString(int c) { return ""; }
+const char* ncclGetLastError(void* c) { return ""; }
+int ncclGetVersion(int* v) { *v=27000; return 0; }
+int ncclGetUniqueId(void* id) { return 0; }
+int ncclCommInitRank(void** c, int n, void* ci, int r) { *c=0; return 0; }
+int ncclCommInitAll(void** cs, int n, const int* dl) { return 0; }
+int ncclCommDestroy(void* c) { return 0; }
+int ncclCommAbort(void* c) { return 0; }
+int ncclCommSplit(void* c, int co, int k, void** nc, void* cnf) { *nc=0; return 0; }
+int ncclCommCount(void* c, int* cnt) { *cnt=1; return 0; }
+int ncclCommCuDevice(void* c, int* d) { *d=0; return 0; }
+int ncclCommUserRank(void* c, int* r) { *r=0; return 0; }
+int ncclCommGetAsyncError(void* c, int* e) { *e=0; return 0; }
+int ncclCommFinalize(void* c) { return 0; }
+int ncclGroupStart() { return 0; }
+int ncclGroupEnd() { return 0; }
+int ncclAllReduce(const void* s, void* r, unsigned long c, int d, int o, void* cm, void* st) { return 0; }
+int ncclReduce(const void* s, void* r, unsigned long c, int d, int o, int rt, void* cm, void* st) { return 0; }
+int ncclBcast(void* b, unsigned long c, int d, int r, void* cm, void* st) { return 0; }
+int ncclBroadcast(const void* s, void* r, unsigned long c, int d, int rt, void* cm, void* st) { return 0; }
+int ncclAllGather(const void* s, void* r, unsigned long c, int d, void* cm, void* st) { return 0; }
+int ncclReduceScatter(const void* s, void* r, unsigned long c, int d, int o, void* cm, void* st) { return 0; }
+int ncclAllToAll(const void* s, void* r, unsigned long c, int d, void* cm, void* st) { return 0; }
+int ncclSend(const void* s, unsigned long c, int d, int p, void* cm, void* st) { return 0; }
+int ncclRecv(void* r, unsigned long c, int d, int p, void* cm, void* st) { return 0; }
+STUB_C
+cp /tmp/librccl_stub.so "${ROCM_PATH}/lib/librccl.so.1"
+ln -sf librccl.so.1 "${ROCM_PATH}/lib/librccl.so"
 
 bazelisk --output_user_root="${BAZEL_OUTPUT_USER_ROOT}" build \
   --config=opt \
   --config=rocm \
-  --config=nonccl \
   $( [[ "${BAZEL_VERBOSE_FAILURES}" == "1" ]] && echo "--verbose_failures" ) \
   --jobs="${JOBS}" \
   --repo_env=TF_ROCM_CLANG=1 \

@@ -345,6 +345,8 @@ def _find_libs(repository_ctx, rocm_config, miopen_path, rccl_path, bash_bin):
     # hipblaslt may be absent even in versions of ROCm where it exists
     # (it is not installed by default in some containers). Autodetect.
     libs_paths.append(("hipblaslt", _rocm_lib_paths(repository_ctx, "hipblaslt", rocm_config.rocm_toolkit_path), True))
+    # rccl may be absent in single-GPU gfx1031 builds.
+    libs_paths.append(("rccl", _rocm_lib_paths(repository_ctx, "rccl", rccl_path), True))
     return _select_rocm_lib_paths(repository_ctx, libs_paths, bash_bin)
 
 def find_rocm_config(repository_ctx, rocm_path):
