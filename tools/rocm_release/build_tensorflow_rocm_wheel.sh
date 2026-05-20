@@ -16,9 +16,9 @@ WHEEL_OUT_DIR="${WHEEL_OUT_DIR:-${RELEASE_ROOT}/wheels/tensorflow_rocm_custom}"
 BUILD_LOG="${BUILD_LOG:-${RELEASE_ROOT}/logs/tensorflow_rocm_build.log}"
 
 # TensorFlow has its own dependency/ABI policy. Keep it explicit and separate
-# from the PyTorch/ONNX Runtime NumPy-2 policy until this TensorFlow wheel is
-# rebuilt and validated under a different contract.
-export TF_BUILD_NUMPY_SPEC="${TF_BUILD_NUMPY_SPEC:-numpy<2}"
+# from the PyTorch/ONNX Runtime helpers while building this wheel against the
+# NumPy 2 runtime contract used by current local consumers.
+export TF_BUILD_NUMPY_SPEC="${TF_BUILD_NUMPY_SPEC:-numpy>=2,<3}"
 export TF_BUILD_PROTOBUF_SPEC="${TF_BUILD_PROTOBUF_SPEC:-protobuf<7}"
 export TF_RUNTIME_NUMPY_SPEC="${TF_RUNTIME_NUMPY_SPEC:-${TF_BUILD_NUMPY_SPEC}}"
 export TF_RUNTIME_PROTOBUF_SPEC="${TF_RUNTIME_PROTOBUF_SPEC:-${TF_BUILD_PROTOBUF_SPEC}}"

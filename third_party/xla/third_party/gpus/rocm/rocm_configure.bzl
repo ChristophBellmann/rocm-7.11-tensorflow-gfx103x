@@ -331,7 +331,7 @@ def _find_libs(repository_ctx, rocm_config, bash_bin):
             ("rocblas", rocm_config.rocm_paths["ROCBLAS"]),
             ("hiprand", rocm_config.rocm_paths["HIPRAND"]),
             ("MIOpen", rocm_config.rocm_paths["MIOPEN"]),
-            ("rccl", rocm_config.rocm_paths["RCCL"]),
+            ("rccl", rocm_config.rocm_paths["RCCL"], True),
             ("hipsparse", rocm_config.rocm_paths["HIPSPARSE"]),
             ("roctracer64", rocm_config.rocm_paths["ROCTRACER"]),
             ("rocsolver", rocm_config.rocm_paths["ROCSOLVER"]),

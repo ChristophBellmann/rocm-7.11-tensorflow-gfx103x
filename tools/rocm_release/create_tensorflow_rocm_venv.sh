@@ -7,7 +7,7 @@ ROCM_PREFIX="${ROCM_PREFIX:-/opt/rocm}"
 VENV_DIR="${VENV_DIR:-$HOME/.venvs/tensorflow-rocm-custom}"
 SRC_DIR="${SRC_DIR:-${RELEASE_ROOT}/wheels/tensorflow_rocm_custom}"
 WHEEL_PATH="${WHEEL_PATH:-}"
-TF_NUMPY_SPEC="${TF_NUMPY_SPEC:-numpy<2}"
+TF_NUMPY_SPEC="${TF_NUMPY_SPEC:-numpy>=2,<3}"
 TF_PROTOBUF_SPEC="${TF_PROTOBUF_SPEC:-protobuf<7}"
 CONSTRAINTS_PATH="${CONSTRAINTS_PATH:-}"
 ASSUME_YES=0
@@ -24,7 +24,7 @@ Options:
   --wheel <path>
   --src-dir <dir>
   --rocm-prefix <dir>
-  --numpy-spec <spec>       default: numpy<2
+  --numpy-spec <spec>       default: numpy>=2,<3
   --protobuf-spec <spec>    default: protobuf<7
   --constraints <path>
   --install <package>

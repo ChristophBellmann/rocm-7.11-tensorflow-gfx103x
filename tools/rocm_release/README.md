@@ -17,21 +17,20 @@ Framework packaging ownership is split by fork:
   ROCm stack build plus integration/validation only
 
 TensorFlow keeps its own isolated build/runtime dependency policy. Do not apply
-the PyTorch project-venv helper or PyTorch NumPy policy to TensorFlow.
+the PyTorch project-venv helper to TensorFlow.
 
 Current TensorFlow default policy:
 
 ```text
-TF_BUILD_NUMPY_SPEC='numpy<2'
+TF_BUILD_NUMPY_SPEC='numpy>=2,<3'
 TF_BUILD_PROTOBUF_SPEC='protobuf<7'
-TF_RUNTIME_NUMPY_SPEC='numpy<2'
+TF_RUNTIME_NUMPY_SPEC='numpy>=2,<3'
 TF_RUNTIME_PROTOBUF_SPEC='protobuf<7'
 ```
 
-Those defaults are intentional until the TensorFlow wheel itself is rebuilt and
-validated with a different ABI/dependency contract. To test a future NumPy-2
-TensorFlow wheel, override both build and runtime specs explicitly and validate
-before promotion.
+Those defaults are the intended ABI/dependency contract for the custom gfx103x
+TensorFlow wheel. Override both build and runtime specs explicitly only when
+running a separate compatibility experiment.
 
 ## Build repo-local
 
@@ -52,11 +51,11 @@ The release wrapper writes a TensorFlow-specific pip constraints file and export
 makes direct pip calls inside the build honor the selected TensorFlow ABI policy
 without duplicating the build implementation.
 
-NumPy-2 experiment, only for an explicit rebuild/validation campaign:
+Alternative NumPy policy, only for an explicit rebuild/validation campaign:
 
 ```bash
-TF_BUILD_NUMPY_SPEC='numpy>=2,<3' \
-TF_RUNTIME_NUMPY_SPEC='numpy>=2,<3' \
+TF_BUILD_NUMPY_SPEC='numpy<2' \
+TF_RUNTIME_NUMPY_SPEC='numpy<2' \
 ROCM_PATH=/path/to/custom/rocm \
 tools/rocm_release/build_tensorflow_rocm_wheel.sh
 ```
